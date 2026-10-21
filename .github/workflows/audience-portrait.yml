@@ -2,11 +2,10 @@ name: Audience Portrait release (public builder)
 on:
   workflow_dispatch:
     inputs:
-      force:
-        description: Rebuild an existing immutable source version
-        type: boolean
+      release_version:
+        description: 'Optional stable release, e.g. 1.0.0 or 1.1.0; blank = next automatic dev'
+        type: string
         required: false
-        default: false
   schedule:
     - cron: '47 */2 * * *'
   push:
@@ -26,7 +25,13 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       version: ${{ steps.check.outputs.version }}
       source_sha: ${{ steps.check.outputs.source_sha }}
+      source_tree: ${{ steps.check.outputs.source_tree }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: BrianOGG/EC-AI
@@ -35,28 +40,21 @@ jobs:
           path: source
           token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
           persist-credentials: false
-      - name: Calculate immutable release version from project tree
+      - name: Test version resolver
+        run: python3 -m unittest discover -s builder/scripts -p 'test_resolve_version.py'
+      - name: Resolve independent automatic dev or manual stable version
         id: check
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ inputs.force }}
+          MANUAL_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
           sha="$(git -C source rev-parse HEAD)"
-          project_tree="$(git -C source rev-parse HEAD:audience-portrait)"
-          version="g$(printf '%.12s' "$project_tree")"
-          tag="audience-portrait-$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
-          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$FORCE" != 'true' ]; then
-            echo 'build=false' >> "$GITHUB_OUTPUT"
-            echo "No change in Audience Portrait source tree; $tag exists."
-          else
-            echo 'build=true' >> "$GITHUB_OUTPUT"
-            echo "Building project tree $project_tree from commit $sha"
-          fi
+          tree="$(git -C source rev-parse HEAD:audience-portrait)"
+          python3 builder/scripts/resolve_version.py \
+            --project audience-portrait --source-tree "$tree" --source-sha "$sha" \
+            --manual-version "$MANUAL_VERSION"
 
   build-macos:
     needs: prepare
@@ -243,20 +241,24 @@ jobs:
             --templates builder/scripts --output dist/release
           test "$(stat -c %s "dist/release/audience-portrait-skill-${{ needs.prepare.outputs.version }}.zip")" -lt 20000000
           unzip -Z1 "dist/release/audience-portrait-skill-${{ needs.prepare.outputs.version }}.zip" | grep -Fx 'SKILL.md'
-      - name: Publish public release binaries only
+      - name: Publish immutable public Release (dev=prerelease)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.prepare.outputs.source_tree }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
-          notes="Audience Portrait compiled from private EC-AI commit $SOURCE_SHA. Only compiled native runtime and small Skill ZIP are published. Runtime is SHA256-verified when the Skill first installs."
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber dist/release/*
-            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes "$notes"
-          else
-            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Audience Portrait $TAG" \
-              --notes "$notes" dist/release/*
+            echo "::error::Refusing to overwrite immutable version $TAG"
+            exit 1
           fi
+          notes="$(printf 'Audience Portrait %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nCompiled Nuitka runtimes (macOS ARM64 / Windows x64) plus a small Agent Skill ZIP (<20 MB). This Skill downloads SHA256-verified runtime on first use; no source is published.\n' "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
+          options=()
+          if [ "$PRERELEASE" = 'true' ]; then options+=(--prerelease); fi
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "Audience Portrait $VERSION" \
+            "${options[@]}" --notes "$notes" dist/release/*
