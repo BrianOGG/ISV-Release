@@ -2,11 +2,10 @@ name: Product Grabber release (public builder)
 on:
   workflow_dispatch:
     inputs:
-      force:
-        description: Rebuild existing version and replace public Release assets
+      release_version:
+        description: 'Optional stable release, e.g. 1.0.0 or 1.1.0; blank = next automatic dev'
         required: false
-        type: boolean
-        default: false
+        type: string
   schedule:
     - cron: '19 */2 * * *'
   push:
@@ -26,7 +25,13 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
       source_sha: ${{ steps.check.outputs.source_sha }}
+      source_tree: ${{ steps.check.outputs.source_tree }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: BrianOGG/EC-AI
@@ -35,28 +40,21 @@ jobs:
           sparse-checkout: product-scraping/product-grabber/package.json
           token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
           persist-credentials: false
-      - name: Check private version and public Release
+      - name: Test version resolver
+        run: python3 -m unittest discover -s builder/scripts -p 'test_resolve_version.py'
+      - name: Resolve independent automatic dev or manual stable version
         id: check
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ inputs.force }}
+          MANUAL_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
-          version="$(jq -r .version source/product-scraping/product-grabber/package.json)"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.-]+)?$ ]] || { echo "::error::Invalid product-grabber version"; exit 1; }
-          tag="product-grabber-v$version"
           sha="$(git -C source rev-parse HEAD)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
-          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$FORCE" != 'true' ]; then
-            echo 'build=false' >> "$GITHUB_OUTPUT"
-            echo "Release $tag exists; skipping. Bump package.json version to publish new changes."
-          else
-            echo 'build=true' >> "$GITHUB_OUTPUT"
-            echo "Building private commit $sha as $tag"
-          fi
+          tree="$(git -C source rev-parse HEAD:product-scraping/product-grabber)"
+          python3 builder/scripts/resolve_version.py \
+            --project product-grabber --source-tree "$tree" --source-sha "$sha" \
+            --manual-version "$MANUAL_VERSION"
 
   build:
     needs: prepare
@@ -88,6 +86,29 @@ jobs:
           version: '11'
       - name: Install pinned build dependencies
         run: pnpm install --frozen-lockfile
+      - name: Stamp version in build workspace only (never change private repo)
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const version = process.env.RELEASE_VERSION;
+            const m = /^(\d+)\.(\d+)\.(\d+)(?:-dev\.(\d+))?$/.exec(version);
+            if (!m) throw Error("invalid release version");
+            const [major, minor, patch] = m.slice(1,4).map(Number);
+            const dev = m[4] === undefined ? 65535 : Number(m[4]);
+            if ([major, minor, patch].some(n => n > 65535) || dev < 1 || dev > 65535)
+              throw Error("Chrome extension version exceeds its numeric component limits");
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = version;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+            const manifestPath = "ext/manifest.json";
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+            manifest.version = [major,minor,patch,dev].join(".");
+            manifest.version_name = version;
+            fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+          '
       - name: Build source-protected Node SEA
         run: node build/build.mjs --platform '${{ matrix.platform }}' --out dist
       - name: Smoke tests
@@ -138,21 +159,24 @@ jobs:
             --templates builder/scripts --output dist/release
           test "$(stat -c %s "dist/release/product-grabber-skill-${{ needs.prepare.outputs.version }}.zip")" -lt 20000000
           unzip -Z1 "dist/release/product-grabber-skill-${{ needs.prepare.outputs.version }}.zip" | grep -Fx 'SKILL.md'
-      - name: Publish public release binaries only
+      - name: Publish immutable public release (dev=prerelease)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.prepare.outputs.source_tree }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
-          notes="Product Grabber $VERSION; private source commit $SOURCE_SHA. Import the small Skill ZIP; it verifies and downloads the matching compiled runtime on first use. macOS arm64 / Windows x64 only. No source is published."
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber dist/release/*
-            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes "$notes"
-          else
-            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Product Grabber $VERSION" \
-              --notes "$notes" dist/release/*
+            echo "::error::Refusing to overwrite immutable version $TAG"
+            exit 1
           fi
+          notes="$(printf 'Product Grabber %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nCompiled runtime downloads for macOS ARM64 and Windows x64. Import the lightweight Skill ZIP (<20 MB) to download and verify the matching runtime automatically. Private source is not published.\n' "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
+          options=()
+          if [ "$PRERELEASE" = 'true' ]; then options+=(--prerelease); fi
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "Product Grabber $VERSION" \
+            "${options[@]}" --notes "$notes" dist/release/*
