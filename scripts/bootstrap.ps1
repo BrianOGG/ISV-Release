@@ -11,6 +11,28 @@ $Url = '@@WIN_URL@@'
 $ExpectedSha = '@@WIN_SHA@@'
 $Platform = 'windows-x64'
 $Root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+
+$FailureStage = 'cache'
+$FailureCode = 'runtime_cache_failed'
+function Write-BootstrapFailure([string]$Stage, [string]$Code) {
+    # No raw exception text, URL, response, token or filesystem path is persisted.
+    try {
+        $Dir = Join-Path $env:LOCALAPPDATA ('ISV-Release\' + $Project + '\logs')
+        New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+        $Record = [ordered]@{
+            schema_version = 1
+            time = [DateTimeOffset]::UtcNow.ToString('o')
+            module = 'bootstrap'
+            stage = $Stage
+            code = $Code
+        }
+        $Line = ConvertTo-Json -InputObject $Record -Compress
+        [IO.File]::AppendAllText((Join-Path $Dir 'bootstrap.jsonl'),
+            $Line + [char]10, (New-Object Text.UTF8Encoding($false)))
+    } catch {
+        # Diagnostics must never mask the original installer failure.
+    }
+}
 $Base = Join-Path $env:LOCALAPPDATA "ISV-Release\$Project\$Version"
 $Cache = Join-Path $Base $ExpectedSha
 $Ready = Join-Path $Cache '.ready'
@@ -21,11 +43,19 @@ try {
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $Stage 'assets'), (Join-Path $Stage 'scripts') | Out-Null
             $Zip = Join-Path $Stage 'runtime.zip'
+            $FailureStage = 'download'
+            $FailureCode = 'runtime_download_failed'
             Invoke-WebRequest -Uri $Url -OutFile $Zip -UseBasicParsing
+            $FailureStage = 'checksum'
+            $FailureCode = 'runtime_checksum_mismatch'
             $ActualSha = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($ActualSha -ne $ExpectedSha) { throw 'runtime_checksum_mismatch' }
+            $FailureStage = 'unpack'
+            $FailureCode = 'runtime_extract_failed'
             $Unpack = Join-Path $Stage 'unpack'
             Expand-Archive -LiteralPath $Zip -DestinationPath $Unpack
+            $FailureStage = 'assets'
+            $FailureCode = 'runtime_assets_missing'
             $Runtime = Join-Path $Unpack 'runtime'
             $Binary = if ($Project -eq 'product-grabber') { 'product-grabber.exe' } else { 'audience-portrait.exe' }
             if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $Runtime $Platform) $Binary) -PathType Leaf)) {
@@ -39,6 +69,8 @@ try {
                 }
                 Move-Item -LiteralPath $Ext -Destination (Join-Path $Stage 'assets\ext')
             }
+            $FailureStage = 'cache'
+            $FailureCode = 'runtime_cache_failed'
             Copy-Item -LiteralPath (Join-Path $Root 'assets\release.json') -Destination (Join-Path $Stage 'assets\release.json')
             Copy-Item -LiteralPath (Join-Path $Root 'scripts\setup-bundled.ps1') -Destination (Join-Path $Stage 'scripts\setup.ps1')
             Copy-Item -LiteralPath (Join-Path $Root 'SKILL.md') -Destination (Join-Path $Stage 'SKILL.md')
@@ -67,9 +99,16 @@ try {
         if ($InstallDir) { $Args.InstallDir = $InstallDir }
         if ($Port) { $Args.Port = $Port }
     }
+    $FailureStage = 'installer'
+    $FailureCode = 'installer_failed'
     & $Installer @Args
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($LASTEXITCODE -ne 0) {
+        $InstallerExit = $LASTEXITCODE
+        Write-BootstrapFailure $FailureStage $FailureCode
+        exit $InstallerExit
+    }
 } catch {
-    [Console]::Error.WriteLine('{"ok":false,"error":"bootstrap_failed","detail":' + (ConvertTo-Json -Compress ([string]$_.Exception.Message)) + '}')
+    Write-BootstrapFailure $FailureStage $FailureCode
+    [Console]::Error.WriteLine('{"ok":false,"error":"bootstrap_failed","code":"' + $FailureCode + '"}')
     exit 1
 }
