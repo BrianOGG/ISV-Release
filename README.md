@@ -10,16 +10,27 @@ EC-AI 私有源码的**公开编译和二进制发布仓库**。不托管业务�
 - 分发产物：每个平台一份**已编译 Runtime** ZIP；一个小于 20,000,000 字节的**轻量 Skill** ZIP（根目录 `SKILL.md`）；SHA256 校验文件。
 - 首次运行 Skill：按系统下载指定 Release 的 Runtime、校验 SHA256、缓存到用户目录，再调用原有安装脚本；无需安装 Node、Python 或编译工具。后续运行直接复用缓存。浏览器扩展仍可能需要用户手动加载。
 
-## 日常使用
+## 版本管理（自动 Dev / 手动正式版）
 
-只需向私有 `EC-AI/main` 推送代码，公开仓库的定时构建任务会自动检查更新，约每两小时运行一次（GitHub schedule 可能延迟）。如需立即运行：在 [Actions](../../actions) 手动启动对应工作流。
+**每个项目独立维护 SemVer 版本号，计数只以成功发布的公开 GitHub Release 为准。** 失败的构建不占版本，历史版本不覆盖。
 
-| 项目 | 版本规则 | 自动发布条件 |
-|---|---|---|
-| Product Grabber | 私有 `product-scraping/product-grabber/package.json` 中的 `version` | **必须增加版本号**；相同版本不会重复构建，手动选择 `force` 可覆盖 |
-| Audience Portrait | 私有 `audience-portrait/` 目录 Git tree hash（`g<12位>`） | 该项目目录有代码改动、且相应版本尚未发布时自动构建 |
+- 开发版本：首次为 `1.0.0-dev.1`，下次项目源码有变化时 `1.0.0-dev.2`、`1.0.0-dev.3`，依此递增。GitHub Release 标记为 Pre-release。
+- 手动正式版：在 [Actions](../../actions) 找到项目的公开构建工作流，选择 **Run workflow**，在 `release_version` 中输入 `1.0.0` 或 `1.1.0`。必须大于该项目现有最新版本；留空即自动 Dev。
+- 正式版之后：例如手动发布 `1.0.0` 后，下次改动自动进入 `1.0.1-dev.1`；手动发布 `1.1.0` 后，下次改动自动进入 `1.1.1-dev.1`。
+- 更新检测：公开仓库定时约每两小时读取私有 `EC-AI/main`，只检查对应项目 Git Tree SHA；不变则跳过，变化则自动编译。多个提交被一次定时构建检测到时，合并为一个 Dev 版本。
+- 唯一历史计数在 GitHub Release 标签中，格式分别为 `product-grabber-v1.0.0-dev.1`、`audience-portrait-v1.0.0-dev.1`。旧的 `product-grabber-v0.5.0` 属于历史包，不参与新版本计数。
+- 构建时仅在临时工作副本里修改 Product Grabber `package.json` 与 Chrome 扩展 `manifest.json`，确保 SEA 内置版本与 GitHub Release 相同。Chrome 要求 `manifest.version` 为数字，如 `1.0.0.1`；真实 Dev 版本显示在 `manifest.version_name` 中。稳定版 Chrome 数字末段为 `65535`。
+- Audience Portrait 通过 `PORTRAIT_BUILD_VERSION` 将相同版本号传给 macOS 和 Windows Nuitka 构建，无需修改私有源码。
+- 只上传编译后的单平台 Runtime 和根目录包含 `SKILL.md` 的小于 20 MB Skill ZIP，所有 Runtime SHA256 值锁定在对应的 Skill ZIP 内。用户安装老版本时仍能取得老 Runtime。
 
-旧的私有仓库 Actions 构建工作流已删除，避免消耗私有 Actions 额度。业务与编译脚本继续保留在私有仓库。
+### 两个仓库如何操作
+
+| 仓库 | 日常操作 |
+|---|---|
+| `EC-AI`（私有） | 正常提交、Push 业务源码和原有编译脚本。**不用更新项目版本号，不用配置 Actions，不用管理 Release** |
+| `ISV-Release`（公开） | 维护构建 Workflow 与轻量安装器；每两小时自动检查源码，也可以手动指定正式版本构建 |
+
+注意：Actions Secrets 里的 `EC_AI_SOURCE_TOKEN` 需要维持对私有 `EC-AI` 仓库 `Contents: read` 的最小权限，并在过期前轮换。不要开放接受不受信任 PR 的构建触发器。
 
 ## 安全边界
 
