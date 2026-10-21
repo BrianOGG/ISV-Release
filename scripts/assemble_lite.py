@@ -60,6 +60,7 @@ def source_assets(project, source, mac, win, stage, platform):
         if not (p / name).is_file():
             raise ValueError(f"missing runtime {p / name}")
         shutil.copy2(p / name, dest / name)
+        # Both platform archives carry the same extension, alongside the local runtime.
         if True:
             ext = stage / "ext"
             shutil.copytree(p / "ext", ext)
@@ -72,6 +73,14 @@ def source_assets(project, source, mac, win, stage, platform):
         scratch = stage / "_extract"
         scratch.mkdir()
         extract_safe(p, scratch)
+        # macOS ditto --sequesterRsrc adds a sibling __MACOSX directory.
+        # Exclude Finder metadata before identifying the actual payload root.
+        metadata = scratch / "__MACOSX"
+        if metadata.exists():
+            shutil.rmtree(metadata)
+        for sidecar in scratch.rglob("._*"):
+            if sidecar.is_file():
+                sidecar.unlink()
         children = [x for x in scratch.iterdir() if x.is_dir()]
         root = children[0] if len(children) == 1 and not any(x.is_file() for x in scratch.iterdir()) else scratch
         for item in root.iterdir():
