@@ -1,0 +1,262 @@
+name: Audience Portrait release (public builder)
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild an existing immutable source version
+        type: boolean
+        required: false
+        default: false
+  schedule:
+    - cron: '47 */2 * * *'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/audience-portrait.yml']
+permissions:
+  contents: write
+concurrency:
+  group: isv-audience-portrait-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      tag: ${{ steps.check.outputs.tag }}
+      version: ${{ steps.check.outputs.version }}
+      source_sha: ${{ steps.check.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: main
+          sparse-checkout: audience-portrait
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Calculate immutable release version from project tree
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          sha="$(git -C source rev-parse HEAD)"
+          project_tree="$(git -C source rev-parse HEAD:audience-portrait)"
+          version="g$(printf '%.12s' "$project_tree")"
+          tag="audience-portrait-$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$FORCE" != 'true' ]; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+            echo "No change in Audience Portrait source tree; $tag exists."
+          else
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+            echo "Building project tree $project_tree from commit $sha"
+          fi
+
+  build-macos:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Configure paths
+        shell: bash
+        run: |
+          echo "PORTRAIT_BUILD_ROOT=$RUNNER_TEMP/audience-portrait/build/macos-arm64" >> "$GITHUB_ENV"
+          echo "PORTRAIT_RELEASE_ROOT=$RUNNER_TEMP/audience-portrait/release/macos-arm64" >> "$GITHUB_ENV"
+          echo "PORTRAIT_BUILD_VERSION=${{ needs.prepare.outputs.version }}" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build frontend
+        working-directory: source/audience-portrait/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Install pinned build dependencies
+        working-directory: source/audience-portrait
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r config/requirements-build.txt
+      - name: Validate portability and compile
+        working-directory: source/audience-portrait
+        run: |
+          .venv/bin/python scripts/check_unix_only_apis.py --self-test
+          .venv/bin/python scripts/check_unix_only_apis.py --root backend
+          bash scripts/build_macos_arm64.sh
+      - name: Smoke test compiled service
+        working-directory: source/audience-portrait
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/audience-portrait/build/macos-arm64/AudiencePortrait-macos-arm64"
+          log="$RUNNER_TEMP/audience-portrait/smoke.log"
+          test -x "$package/audience-portrait"
+          export PORTRAIT_STORAGE=memory PORTRAIT_PORT=8766
+          export PORTRAIT_DATA_DIR="$RUNNER_TEMP/audience-portrait/smoke-data"
+          "$package/audience-portrait" > "$log" 2>&1 &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          .venv/bin/python scripts/smoke_test_service.py --base-url "http://127.0.0.1:8766" || {
+            tail -n 40 "$log"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portrait-macos
+          path: ${{ runner.temp }}/audience-portrait/release/macos-arm64/*.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  build-windows:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Configure paths
+        shell: pwsh
+        run: |
+          "PORTRAIT_BUILD_ROOT=$env:RUNNER_TEMP\audience-portrait\build\windows-x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PORTRAIT_RELEASE_ROOT=$env:RUNNER_TEMP\audience-portrait\release\windows-x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PORTRAIT_BUILD_VERSION=${{ needs.prepare.outputs.version }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build frontend
+        working-directory: source/audience-portrait/frontend
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
+      - name: Install pinned build dependencies
+        working-directory: source/audience-portrait
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r config\requirements-build.txt
+      - name: Validate portability
+        working-directory: source/audience-portrait
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe scripts\check_unix_only_apis.py --self-test
+          .\.venv\Scripts\python.exe scripts\check_unix_only_apis.py --root backend
+      - name: Build with clang
+        id: clang
+        continue-on-error: true
+        working-directory: source/audience-portrait
+        shell: pwsh
+        env:
+          PORTRAIT_C_COMPILER: clang
+        run: .\scripts\build_windows_x64.ps1
+      - name: Fall back to MSVC
+        if: steps.clang.outcome == 'failure'
+        working-directory: source/audience-portrait
+        shell: pwsh
+        env:
+          PORTRAIT_C_COMPILER: msvc
+          PORTRAIT_ALLOW_OVERWRITE: '1'
+        run: .\scripts\build_windows_x64.ps1
+      - name: Smoke test Windows service
+        working-directory: source/audience-portrait
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:PORTRAIT_BUILD_ROOT 'AudiencePortrait-windows-x64\audience-portrait.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Compiled executable missing' }
+          $env:PORTRAIT_DATA_DIR = Join-Path $env:RUNNER_TEMP 'smoke-data'
+          $env:PORTRAIT_STORAGE = 'memory'
+          $env:PORTRAIT_PORT = '18999'
+          $service = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+          try {
+            .\.venv\Scripts\python.exe scripts\smoke_test_service.py --base-url 'http://127.0.0.1:18999'
+            if ($LASTEXITCODE -ne 0) { throw 'Compiled service smoke test failed' }
+          } finally {
+            if (-not $service.HasExited) { Stop-Process -Id $service.Id -Force -ErrorAction SilentlyContinue }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portrait-windows
+          path: ${{ runner.temp }}/audience-portrait/release/windows-x64/*.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [prepare, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          sparse-checkout: |
+            audience-portrait/skills/audience-portrait
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: portrait-macos
+          path: portrait/mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: portrait-windows
+          path: portrait/win
+      - name: Assemble compiled runtime zips and portable Skill
+        shell: bash
+        run: |
+          set -euo pipefail
+          mac="$(find portrait/mac -maxdepth 1 -name '*.zip' -print -quit)"
+          win="$(find portrait/win -maxdepth 1 -name '*.zip' -print -quit)"
+          test -n "$mac" && test -n "$win"
+          python3 builder/scripts/assemble_lite.py \
+            --project audience-portrait \
+            --version '${{ needs.prepare.outputs.version }}' \
+            --tag '${{ needs.prepare.outputs.tag }}' \
+            --source source --mac "$mac" --win "$win" \
+            --templates builder/scripts --output dist/release
+          test "$(stat -c %s "dist/release/audience-portrait-skill-${{ needs.prepare.outputs.version }}.zip")" -lt 20000000
+          unzip -Z1 "dist/release/audience-portrait-skill-${{ needs.prepare.outputs.version }}.zip" | grep -Fx 'SKILL.md'
+      - name: Publish public release binaries only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          notes="Audience Portrait compiled from private EC-AI commit $SOURCE_SHA. Only compiled native runtime and small Skill ZIP are published. Runtime is SHA256-verified when the Skill first installs."
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber dist/release/*
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "Audience Portrait $TAG" \
+              --notes "$notes" dist/release/*
+          fi
