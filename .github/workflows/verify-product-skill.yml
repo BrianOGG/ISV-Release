@@ -1,0 +1,45 @@
+name: Verify published Product Grabber Skill bootstrap
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-product-skill.yml']
+permissions:
+  contents: read
+
+jobs:
+  smoke-bootstrap:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, platform: macos-arm64 }
+          - { runner: windows-2022, platform: windows-x64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download only public Skill release
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/BrianOGG/ISV-Release/releases/download/product-grabber-v0.5.0/product-grabber-skill-0.5.0.zip'
+          Invoke-WebRequest -Uri $url -OutFile skill.zip -UseBasicParsing
+          Expand-Archive -LiteralPath skill.zip -DestinationPath skill
+          if (-not (Test-Path -LiteralPath skill/SKILL.md)) { throw 'Missing root-level SKILL.md' }
+      - name: Test macOS first-time download, checksum and runtime status
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh skill/scripts/setup.sh status > status.json
+          grep -q '"ok":true' status.json
+          test -d "$HOME/Library/Caches/ISV-Release/product-grabber/0.5.0"
+      - name: Test Windows first-time download, checksum and runtime status
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          powershell -NoProfile -File skill/scripts/setup.ps1 -Action status | Out-File -FilePath status.json -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Bootstrap returned non-zero status' }
+          $obj = Get-Content status.json -Raw | ConvertFrom-Json
+          if (-not $obj.ok) { throw 'Bootstrap status is not OK' }
+          if (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'ISV-Release\product-grabber\0.5.0'))) {
+            throw 'Runtime was not cached'
+          }
