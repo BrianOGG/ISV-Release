@@ -56,8 +56,29 @@ jobs:
             --project product-grabber --source-tree "$tree" --source-sha "$sha" \
             --manual-version "$MANUAL_VERSION"
 
-  build:
+  preflight:
     needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Fast private-source regression tests (no compile)
+        working-directory: source/product-scraping/product-grabber
+        run: |
+          npm test
+          node --test test/diagnostics.test.mjs test/native-registration.test.mjs
+
+  build:
+    needs: [prepare, preflight]
     if: needs.prepare.outputs.build == 'true'
     strategy:
       fail-fast: false
@@ -78,12 +99,14 @@ jobs:
           path: source
           token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '26'
       - uses: pnpm/action-setup@v4
         with:
           version: '11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: pnpm
+          cache-dependency-path: source/product-scraping/product-grabber/pnpm-lock.yaml
       - name: Install pinned build dependencies
         run: pnpm install --frozen-lockfile
       - name: Stamp version in build workspace only (never change private repo)
@@ -111,20 +134,52 @@ jobs:
           '
       - name: Build source-protected Node SEA
         run: node build/build.mjs --platform '${{ matrix.platform }}' --out dist
-      - name: Smoke tests
-        run: |
-          node --test test/native-registration.test.mjs
-          node test/package-smoke.mjs 'dist/${{ matrix.platform }}/${{ matrix.binary }}'
       - name: Upload compiled payload only (never source)
         uses: actions/upload-artifact@v4
         with:
           name: product-runtime-${{ matrix.platform }}
           path: source/product-scraping/product-grabber/dist/${{ matrix.platform }}/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
+
+  test-runtime:
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: macos-14, binary: product-grabber }
+          - { platform: windows-x64, runner: windows-2022, binary: product-grabber.exe }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: source/product-scraping/product-grabber
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: actions/download-artifact@v4
+        with:
+          name: product-runtime-${{ matrix.platform }}
+          path: source/product-scraping/product-grabber/dist/${{ matrix.platform }}
+      - name: Stamp test workspace version (binary must match)
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node -e 'const fs=require("fs");const f="package.json";const p=JSON.parse(fs.readFileSync(f));p.version=process.env.RELEASE_VERSION;fs.writeFileSync(f,JSON.stringify(p)+"\\n")'
+      - name: Install / native messaging / upgrade / rollback / uninstall smoke
+        run: node test/package-smoke.mjs 'dist/${{ matrix.platform }}/${{ matrix.binary }}'
 
   publish:
-    needs: [prepare, build]
+    needs: [prepare, preflight, build, test-runtime]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
