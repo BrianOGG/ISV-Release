@@ -1,0 +1,162 @@
+// macOS JavaScript for Automation (osascript): read only safe JSONL fields.
+// No runtime dependency and no code from the private source repository.
+ObjC.import('Foundation');
+
+var MODULES = ['server', 'entry', 'queue', 'llm', 'web_app', 'web_app_memory', 'run_web'];
+var STAGES = ['startup', 'http.request', 'queue.persist', 'queue.collect',
+  'queue.state', 'queue.pump', 'analysis.enqueue', 'analysis.run', 'analysis.http',
+  'scheduler.run', 'process.uncaught', 'process.unhandled_rejection',
+  'portrait.crawl', 'task.portrait', 'task.merge', 'merge.upload',
+  'merge.inspect', 'merge.prepare'];
+var BOOT_STAGES = ['platform', 'download', 'checksum', 'unpack', 'assets',
+  'cache', 'installer'];
+var BOOT_CODES = ['unsupported_platform', 'runtime_download_failed',
+  'runtime_checksum_mismatch', 'runtime_extract_failed', 'runtime_assets_missing',
+  'runtime_cache_failed', 'installer_failed', 'bootstrap_failed'];
+var CODES = ['EACCES', 'EPERM', 'ENOENT', 'ENOSPC', 'EIO', 'EADDRINUSE',
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'ERR_INVALID_URL',
+  'ERR_SQLITE_ERROR', 'ssr_not_found', 'ssr_timeout', 'empty_ssr',
+  'result_timeout', 'inflight_timeout', 'login_required',
+  'detail_images_timeout', 'open_tab_failed', 'invalid_ssr', 'upstream_http',
+  'instance_locked', 'item_missing', 'images_missing', 'image_download_failed',
+  'EAGAIN', 'EPIPE', 'ECONNABORTED', 'EBUSY', 'EEXIST', 'EINVAL'];
+var MAX_SOURCE = 2400000;
+var MAX_OUTPUT = 5000000;
+
+function regular(value, regex, fallback) {
+  return typeof value === 'string' && regex.test(value) ? value : fallback;
+}
+function readString(file, maxBytes) {
+  var manager = $.NSFileManager.defaultManager;
+  if (!manager.fileExistsAtPath($(file))) return {status: 'missing', text: ''};
+  var attrs = manager.attributesOfItemAtPathError($(file), null);
+  if (!attrs) return {status: 'unreadable', text: ''};
+  var size = Number(ObjC.unwrap(attrs.objectForKey($.NSFileSize)));
+  if (!isFinite(size)) return {status: 'unreadable', text: ''};
+  var handle = $.NSFileHandle.fileHandleForReadingAtPath($(file));
+  if (!handle) return {status: 'unreadable', text: ''};
+  var truncated = size > maxBytes;
+  var offset = Math.max(0, size - maxBytes);
+  var decoded = null;
+  try {
+    for (var shift = 0; shift <= 4 && decoded === null; shift++) {
+      handle.seekToFileOffset(offset + shift);
+      var data = handle.readDataToEndOfFile;
+      var value = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
+      if (value) decoded = ObjC.unwrap(value);
+    }
+  } catch (error) {
+    return {status: 'unreadable', text: ''};
+  } finally {
+    handle.closeFile;
+  }
+  if (decoded === null) return {status: 'unreadable', text: ''};
+  if (truncated) {
+    var end = decoded.indexOf('\n');
+    decoded = end < 0 ? '' : decoded.slice(end + 1);
+  }
+  return {status: 'ok', text: decoded, truncated: truncated};
+}
+function safeStack(raw) {
+  if (typeof raw !== 'string') return '';
+  var lines = raw.split(/\r?\n/);
+  var safe = [];
+  for (var i = 0; i < lines.length && safe.length < 64; i++) {
+    var line = lines[i];
+    if (/^[A-Za-z_][A-Za-z0-9_]{0,63}: original details omitted$/.test(line)) {
+      safe.push(line);
+    } else if (/^ {2}File "[A-Za-z_][A-Za-z0-9_.-]{0,79}(?:\.py)?", line [0-9]{1,8}, in [A-Za-z_<>][A-Za-z0-9_.<>-]{0,95}$/.test(line)) {
+      safe.push(line);
+    } else if (/^ {4}at (?:[A-Za-z_][A-Za-z0-9_.-]{0,79}|<runtime>):[0-9]{1,8}:[0-9]{1,8}$/.test(line)) {
+      safe.push(line);
+    }
+  }
+  return safe.join('\n');
+}
+function accept(record, source, cutoff, now) {
+  if (!record || typeof record !== 'object' || record.schema_version !== 1) return null;
+  var ms = typeof record.time === 'string' ? Date.parse(record.time) : NaN;
+  if (!isFinite(ms) || ms < cutoff || ms > now + 600000) return null;
+  if (source === 'bootstrap') {
+    if (record.module !== 'bootstrap' ||
+        BOOT_STAGES.indexOf(record.stage) < 0 ||
+        BOOT_CODES.indexOf(record.code) < 0) return null;
+    return {time: new Date(ms).toISOString(), source: 'bootstrap',
+      module: 'bootstrap', stage: record.stage, type: 'BootstrapError',
+      code: record.code, message: 'BootstrapError (' + record.code + '): details omitted'};
+  }
+  if (MODULES.indexOf(record.module) < 0 || STAGES.indexOf(record.stage) < 0) return null;
+  var kind = regular(record.type, /^[A-Za-z_][A-Za-z0-9_]{0,63}$/, 'Error');
+  var code = CODES.indexOf(record.code) >= 0 ? record.code : null;
+  var item = {time: new Date(ms).toISOString(), source: 'runtime',
+    module: record.module, stage: record.stage, type: kind, code: code,
+    message: kind + (code ? ' (' + code + ')' : '') + ': original details omitted',
+    stack: safeStack(record.stack)};
+  if (record.platform === 'jd' || record.platform === 'tmall' ||
+      ['dmp','databank','yuntu','strategy_center','lingxi'].indexOf(record.platform) >= 0) {
+    item.platform = record.platform;
+  }
+  if (typeof record.task_id === 'string' && /^[a-f0-9]{32}$/.test(record.task_id)) {
+    item.task_id = record.task_id;
+  }
+  if (typeof record.status === 'number' && Number.isInteger(record.status) &&
+      record.status >= 100 && record.status <= 599) item.status = record.status;
+  return item;
+}
+function parseSource(file, label, cutoff, now, result) {
+  var read = readString(file, MAX_SOURCE);
+  result.sources[label] = {status: read.status, truncated: !!read.truncated};
+  if (read.status !== 'ok') return;
+  var lines = read.text.split(/\r?\n/);
+  var invalid = 0;
+  for (var i = 0; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    try {
+      var safe = accept(JSON.parse(lines[i]), label, cutoff, now);
+      if (safe) result.entries.push(safe);
+      else invalid++;
+    } catch (error) {
+      invalid++;
+    }
+  }
+  result.sources[label].omitted = invalid;
+}
+function run(argv) {
+  if (argv.length !== 4) throw Error('expected project, release, output, hours');
+  var project = argv[0], release = argv[1], output = argv[2];
+  var hours = Number(argv[3]);
+  if (['product-grabber', 'audience-portrait'].indexOf(project) < 0 ||
+      !Number.isInteger(hours) || hours < 1 || hours > 168) throw Error('invalid arguments');
+  var home = ObjC.unwrap($.NSHomeDirectory());
+  var dataRoot = project === 'product-grabber'
+    ? home + '/.product-grabber/data'
+    : home + '/Library/Application Support/AudiencePortrait';
+  var base = home + '/Library/Application Support/ISV-Release/' + project + '/logs';
+  var version = 'unknown';
+  var manifest = readString(release, 100000);
+  if (manifest.status === 'ok') {
+    try {
+      var info = JSON.parse(manifest.text);
+      version = regular(info.version, /^[0-9]+\.[0-9]+\.[0-9]+(?:-dev\.[0-9]+)?$/, 'unknown');
+    } catch (ignore) {}
+  }
+  var now = Date.now();
+  var outputRecord = {schema_version: 1, project: project, version: version,
+    platform: 'macos-arm64', exported_at: new Date(now).toISOString(),
+    window_hours: hours, sources: {}, entries: [], truncated: false};
+  parseSource(dataRoot + '/logs/diagnostics.jsonl', 'runtime', now - hours * 3600000, now, outputRecord);
+  parseSource(base + '/bootstrap.jsonl', 'bootstrap', now - hours * 3600000, now, outputRecord);
+  outputRecord.entries.sort(function(a,b){return a.time.localeCompare(b.time);});
+  var rendered = JSON.stringify(outputRecord, null, 2) + '\n';
+  while (ObjC.unwrap($(rendered).lengthOfBytesUsingEncoding($.NSUTF8StringEncoding)) > MAX_OUTPUT &&
+         outputRecord.entries.length > 0) {
+    outputRecord.entries.shift();
+    outputRecord.truncated = true;
+    rendered = JSON.stringify(outputRecord, null, 2) + '\n';
+  }
+  var payload = $(rendered).dataUsingEncoding($.NSUTF8StringEncoding);
+  if (!$.NSFileManager.defaultManager.createFileAtPathContentsAttributes($(output), payload, null)) {
+    throw Error('unable to write diagnostics JSON');
+  }
+  return output;
+}
