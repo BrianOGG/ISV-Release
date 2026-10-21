@@ -32,6 +32,18 @@ EC-AI 私有源码的**公开编译和二进制发布仓库**。不托管业务�
 
 注意：Actions Secrets 里的 `EC_AI_SOURCE_TOKEN` 需要维持对私有 `EC-AI` 仓库 `Contents: read` 的最小权限，并在过期前轮换。不要开放接受不受信任 PR 的构建触发器。
 
+## 开发者离线诊断
+
+最新生成的轻量 Skill 包内包含离线 JSON 导出脚本，无需启动服务，也无需安装 Node/Python：
+
+- macOS：在 Skill 根目录运行 `sh scripts/export-diagnostics.sh`。
+- Windows：在 Skill 根目录运行 `powershell -NoProfile -File scripts/export-diagnostics.ps1`。
+- 默认最近 24 小时；macOS 可使用 `--output PATH --hours 48`，Windows 使用 `-Output PATH -Hours 48`。
+- 导出器只读取两类受白名单限制的 `logs/diagnostics.jsonl`（私有 Runtime 持久化错误）和 `bootstrap.jsonl`（公开安装引导错误），不复制 `server.log`、业务数据库、账号配置或原始网络响应。安全 JSON 最大约 5 MB。
+- macOS 安装引导记录位于 `~/Library/Application Support/ISV-Release/<project>/logs/bootstrap.jsonl`，Windows 位于 `%LOCALAPPDATA%\ISV-Release\<project>\logs\bootstrap.jsonl`。
+
+以上功能只会随**新构建**的 Skill 和 Runtime 发布；已有历史 Release 资产不可覆盖。单独验证测试见 `Verify offline diagnostics (public scripts only)` Actions 工作流，不读取私有源码。
+
 ## 安全边界
 
 1. 公开工作流**不接受 PR 或任意用户提供的 Git ref**；只使用私有 `main` 的已提交源码。不要随意扩大 workflow 触发范围。
