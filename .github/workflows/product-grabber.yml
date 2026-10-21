@@ -174,7 +174,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          node -e 'const fs=require("fs");const f="package.json";const p=JSON.parse(fs.readFileSync(f));p.version=process.env.RELEASE_VERSION;fs.writeFileSync(f,JSON.stringify(p)+"\\n")'
+          node -e 'const fs=require("fs");const f="package.json";const p=JSON.parse(fs.readFileSync(f));p.version=process.env.RELEASE_VERSION;fs.writeFileSync(f,JSON.stringify(p))'
       - name: Install / native messaging / upgrade / rollback / uninstall smoke
         run: node test/package-smoke.mjs 'dist/${{ matrix.platform }}/${{ matrix.binary }}'
 
