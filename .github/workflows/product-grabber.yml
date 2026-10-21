@@ -1,0 +1,158 @@
+name: Product Grabber release (public builder)
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild existing version and replace public Release assets
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '19 */2 * * *'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/product-grabber.yml']
+permissions:
+  contents: write
+concurrency:
+  group: isv-product-grabber-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      source_sha: ${{ steps.check.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: main
+          path: source
+          sparse-checkout: product-scraping/product-grabber/package.json
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Check private version and public Release
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version source/product-scraping/product-grabber/package.json)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.-]+)?$ ]] || { echo "::error::Invalid product-grabber version"; exit 1; }
+          tag="product-grabber-v$version"
+          sha="$(git -C source rev-parse HEAD)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$FORCE" != 'true' ]; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+            echo "Release $tag exists; skipping. Bump package.json version to publish new changes."
+          else
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+            echo "Building private commit $sha as $tag"
+          fi
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: macos-14, binary: product-grabber }
+          - { platform: windows-x64, runner: windows-2022, binary: product-grabber.exe }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: source/product-scraping/product-grabber
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11'
+      - name: Install pinned build dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build source-protected Node SEA
+        run: node build/build.mjs --platform '${{ matrix.platform }}' --out dist
+      - name: Smoke tests
+        run: |
+          node --test test/native-registration.test.mjs
+          node test/package-smoke.mjs 'dist/${{ matrix.platform }}/${{ matrix.binary }}'
+      - name: Upload compiled payload only (never source)
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-runtime-${{ matrix.platform }}
+          path: source/product-scraping/product-grabber/dist/${{ matrix.platform }}/
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          sparse-checkout: product-scraping/product-grabber/skills/product-grabber
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: product-runtime-macos-arm64
+          path: pg/mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: product-runtime-windows-x64
+          path: pg/win
+      - name: Assemble portable runtimes and small Skill
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/scripts/assemble_lite.py \
+            --project product-grabber \
+            --version '${{ needs.prepare.outputs.version }}' \
+            --tag '${{ needs.prepare.outputs.tag }}' \
+            --source source --mac pg/mac --win pg/win \
+            --templates builder/scripts --output dist/release
+          test "$(stat -c %s "dist/release/product-grabber-skill-${{ needs.prepare.outputs.version }}.zip")" -lt 20000000
+          unzip -Z1 "dist/release/product-grabber-skill-${{ needs.prepare.outputs.version }}.zip" | grep -Fx 'SKILL.md'
+      - name: Publish public release binaries only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          notes="Product Grabber $VERSION; private source commit $SOURCE_SHA. Import the small Skill ZIP; it verifies and downloads the matching compiled runtime on first use. macOS arm64 / Windows x64 only. No source is published."
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber dist/release/*
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "Product Grabber $VERSION" \
+              --notes "$notes" dist/release/*
+          fi
