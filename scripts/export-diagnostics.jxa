@@ -155,7 +155,7 @@ function run(argv) {
     rendered = JSON.stringify(outputRecord, null, 2) + '\n';
   }
   var payload = $(rendered).dataUsingEncoding($.NSUTF8StringEncoding);
-  if (!$.NSFileManager.defaultManager.createFileAtPathContentsAttributes($(output), payload, null)) {
+  if (!$.NSFileManager.defaultManager.createFileAtPathContentsAttributes($(output), payload, $.NSDictionary.dictionary)) {
     throw Error('unable to write diagnostics JSON');
   }
   return output;
