@@ -9,6 +9,7 @@ on:
       - scripts/bootstrap.sh
       - scripts/bootstrap.ps1
       - scripts/assemble_lite.py
+      - scripts/test_diagnostics_assembly.py
       - .github/workflows/verify-diagnostics.yml
   workflow_dispatch:
 
@@ -16,6 +17,13 @@ permissions:
   contents: read
 
 jobs:
+  archive-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify synthetic Skill packaging contracts
+        run: python3 -m unittest discover -s scripts -p 'test_diagnostics_assembly.py' -v
+
   macos-export:
     runs-on: macos-latest
     steps:
