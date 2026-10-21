@@ -64,6 +64,20 @@ jobs:
           assert any(x['source']=='bootstrap' for x in data['entries'])
           assert any(x['source']=='runtime' and 'web_app_memory.py' in x['stack'] for x in data['entries'])
           PY
+          # Bootstrap failure must also survive without a running runtime.
+          sed -e 's/@@PROJECT@@/audience-portrait/g' -e 's/@@VERSION@@/1.0.0-dev.1/g' \
+              -e 's#@@MAC_URL@@#https://127.0.0.1:1/missing.zip#g' \
+              -e 's/@@MAC_SHA@@/00000000/g' scripts/bootstrap.sh > "$root/scripts/bootstrap-test.sh"
+          if sh "$root/scripts/bootstrap-test.sh" status >/dev/null 2>&1; then
+            echo "expected bootstrap failure" >&2; exit 1
+          fi
+          python3 - "$boot/bootstrap.jsonl" <<'PY'
+          import json,sys
+          rows=[json.loads(s) for s in open(sys.argv[1],encoding="utf-8")]
+          assert rows[-1]["module"]=="bootstrap"
+          assert rows[-1]["stage"] in ("platform","download"),rows[-1]
+          assert rows[-1]["code"] in ("unsupported_platform","runtime_download_failed")
+          PY
 
   windows-export:
     runs-on: windows-latest
@@ -96,3 +110,13 @@ jobs:
             $Raw.Contains('SECRET-TEST') -or $Report.version -ne '1.0.0-dev.1') {
             throw 'invalid exported report or sensitive data present'
           }
+          # Deliberately fail download using loopback; raw error text must not be persisted.
+          $BTemplate = Get-Content -LiteralPath scripts/bootstrap.ps1 -Raw
+          $BTemplate = $BTemplate.Replace('@@PROJECT@@','product-grabber').Replace('@@VERSION@@','1.0.0-dev.1')
+          $BTemplate = $BTemplate.Replace('@@WIN_URL@@','https://127.0.0.1:1/missing.zip').Replace('@@WIN_SHA@@','00000000')
+          $BScript = Join-Path $Root 'scripts/bootstrap-test.ps1'
+          [IO.File]::WriteAllText($BScript, $BTemplate, (New-Object Text.UTF8Encoding($false)))
+          $Proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-File',$BScript) -PassThru -Wait
+          if ($Proc.ExitCode -eq 0) { throw 'bootstrap unexpectedly passed' }
+          $Log = Get-Content -LiteralPath (Join-Path $Boot 'bootstrap.jsonl') -Tail 1 -Encoding UTF8 | ConvertFrom-Json
+          if ($Log.stage -ne 'download' -or $Log.code -ne 'runtime_download_failed') { throw 'failure was not journaled safely' }
