@@ -56,8 +56,50 @@ jobs:
             --project audience-portrait --source-tree "$tree" --source-sha "$sha" \
             --manual-version "$MANUAL_VERSION"
 
-  build-macos:
+  preflight:
     needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: source/audience-portrait/frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+          cache-dependency-path: source/audience-portrait/config/requirements-build.txt
+      - name: Build and typecheck frontend once (reused on both platforms)
+        working-directory: source/audience-portrait/frontend
+        run: |
+          npm ci
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portrait-frontend
+          path: source/audience-portrait/frontend/dist/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Portability check, bytecode compilation and private diagnostic tests
+        working-directory: source/audience-portrait
+        run: |
+          python -m compileall -q backend
+          python scripts/check_unix_only_apis.py --self-test
+          python scripts/check_unix_only_apis.py --root backend
+          python -m pip install -r config/requirements-build.txt
+          python -m unittest discover -s tests -p 'test_diagnostics.py' -v
+
+  build-macos:
+    needs: [prepare, preflight]
     if: needs.prepare.outputs.build == 'true'
     runs-on: macos-14
     steps:
@@ -77,14 +119,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - uses: actions/setup-node@v4
+          cache: pip
+          cache-dependency-path: source/audience-portrait/config/requirements-build.txt
+      - uses: actions/download-artifact@v4
         with:
-          node-version: '22'
-      - name: Build frontend
-        working-directory: source/audience-portrait/frontend
-        run: |
-          npm ci
-          npm run build
+          name: portrait-frontend
+          path: source/audience-portrait/frontend/dist/
       - name: Install pinned build dependencies
         working-directory: source/audience-portrait
         run: |
@@ -97,30 +137,15 @@ jobs:
           .venv/bin/python scripts/check_unix_only_apis.py --self-test
           .venv/bin/python scripts/check_unix_only_apis.py --root backend
           bash scripts/build_macos_arm64.sh
-      - name: Smoke test compiled service
-        working-directory: source/audience-portrait
-        shell: bash
-        run: |
-          set -euo pipefail
-          package="$RUNNER_TEMP/audience-portrait/build/macos-arm64/AudiencePortrait-macos-arm64"
-          log="$RUNNER_TEMP/audience-portrait/smoke.log"
-          test -x "$package/audience-portrait"
-          export PORTRAIT_STORAGE=memory PORTRAIT_PORT=8766
-          export PORTRAIT_DATA_DIR="$RUNNER_TEMP/audience-portrait/smoke-data"
-          "$package/audience-portrait" > "$log" 2>&1 &
-          service_pid=$!
-          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
-          .venv/bin/python scripts/smoke_test_service.py --base-url "http://127.0.0.1:8766" || {
-            tail -n 40 "$log"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: portrait-macos
           path: ${{ runner.temp }}/audience-portrait/release/macos-arm64/*.zip
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
 
   build-windows:
-    needs: prepare
+    needs: [prepare, preflight]
     if: needs.prepare.outputs.build == 'true'
     runs-on: windows-2022
     steps:
@@ -140,15 +165,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - uses: actions/setup-node@v4
+          cache: pip
+          cache-dependency-path: source/audience-portrait/config/requirements-build.txt
+      - uses: actions/download-artifact@v4
         with:
-          node-version: '22'
-      - name: Build frontend
-        working-directory: source/audience-portrait/frontend
-        shell: pwsh
-        run: |
-          npm ci
-          npm run build
+          name: portrait-frontend
+          path: source/audience-portrait/frontend/dist/
       - name: Install pinned build dependencies
         working-directory: source/audience-portrait
         shell: pwsh
@@ -178,31 +200,77 @@ jobs:
           PORTRAIT_C_COMPILER: msvc
           PORTRAIT_ALLOW_OVERWRITE: '1'
         run: .\scripts\build_windows_x64.ps1
-      - name: Smoke test Windows service
-        working-directory: source/audience-portrait
-        shell: pwsh
-        run: |
-          $exe = Join-Path $env:PORTRAIT_BUILD_ROOT 'AudiencePortrait-windows-x64\audience-portrait.exe'
-          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Compiled executable missing' }
-          $env:PORTRAIT_DATA_DIR = Join-Path $env:RUNNER_TEMP 'smoke-data'
-          $env:PORTRAIT_STORAGE = 'memory'
-          $env:PORTRAIT_PORT = '18999'
-          $service = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
-          try {
-            .\.venv\Scripts\python.exe scripts\smoke_test_service.py --base-url 'http://127.0.0.1:18999'
-            if ($LASTEXITCODE -ne 0) { throw 'Compiled service smoke test failed' }
-          } finally {
-            if (-not $service.HasExited) { Stop-Process -Id $service.Id -Force -ErrorAction SilentlyContinue }
-          }
       - uses: actions/upload-artifact@v4
         with:
           name: portrait-windows
           path: ${{ runner.temp }}/audience-portrait/release/windows-x64/*.zip
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
+
+  test-macos:
+    needs: [prepare, build-macos]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: portrait-macos
+          path: runtime-zip
+      - name: Smoke test extracted compiled runtime without Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find runtime-zip -maxdepth 1 -name '*.zip' -print -quit)"
+          test -n "$archive"
+          mkdir -p "$RUNNER_TEMP/portrait-unpack"
+          ditto -x -k "$archive" "$RUNNER_TEMP/portrait-unpack"
+          exe="$(find "$RUNNER_TEMP/portrait-unpack" -type f -name audience-portrait -print -quit)"
+          test -n "$exe" && test -x "$exe"
+          export PORTRAIT_STORAGE=memory PORTRAIT_PORT=8766
+          export PORTRAIT_DATA_DIR="$RUNNER_TEMP/portrait-smoke-data"
+          "$exe" > "$RUNNER_TEMP/portrait-smoke.log" 2>&1 &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          python3 builder/scripts/smoke_portrait_service.py --base-url http://127.0.0.1:8766 || {
+            tail -n 40 "$RUNNER_TEMP/portrait-smoke.log"; exit 1; }
+
+  test-windows:
+    needs: [prepare, build-windows]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: portrait-windows
+          path: runtime-zip
+      - name: Smoke test extracted compiled runtime without Python dependencies
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem 'runtime-zip' -Filter '*.zip' | Select-Object -First 1
+          if (-not $archive) { throw 'compiled runtime archive is missing' }
+          $dir = Join-Path $env:RUNNER_TEMP 'portrait-unpack'
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $dir
+          $exe = Get-ChildItem -LiteralPath $dir -Filter audience-portrait.exe -File -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'compiled runtime executable is missing' }
+          $env:PORTRAIT_DATA_DIR = Join-Path $env:RUNNER_TEMP 'portrait-smoke-data'
+          $env:PORTRAIT_STORAGE = 'memory'
+          $env:PORTRAIT_PORT = '18999'
+          $proc = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru -WindowStyle Hidden
+          try {
+            python builder/scripts/smoke_portrait_service.py --base-url http://127.0.0.1:18999
+            if ($LASTEXITCODE -ne 0) { throw 'compiled service smoke test failed' }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
 
   publish:
-    needs: [prepare, build-macos, build-windows]
+    needs: [prepare, preflight, build-macos, build-windows, test-macos, test-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
