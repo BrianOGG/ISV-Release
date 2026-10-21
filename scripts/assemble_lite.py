@@ -137,6 +137,14 @@ def build(project, version, tag, source, mac, win, output, templates):
             for key, value in variables.items():
                 template = template.replace(key, value)
             (stage / "scripts" / platform_script).write_text(template)
+        # Diagnostics are public, offline, source-independent developer tools.
+        # Keep them in the tiny Skill even before the binary runtime is installed.
+        shutil.copy2(templates / "export-diagnostics.jxa",
+                     stage / "scripts" / "export-diagnostics.jxa")
+        for diagnostics_script in ("export-diagnostics.sh", "export-diagnostics.ps1"):
+            template = (templates / diagnostics_script).read_text(encoding="utf-8")
+            (stage / "scripts" / diagnostics_script).write_text(
+                template.replace("@@PROJECT@@", project), encoding="utf-8")
         refs = source_skill / "references"
         if refs.exists():
             shutil.copytree(refs, stage / "references", dirs_exist_ok=True)
@@ -145,7 +153,11 @@ def build(project, version, tag, source, mac, win, output, templates):
                   "这是轻量引导型 Skill ZIP，不含可执行程序。首次运行 scripts/setup.sh 或 "
                   "scripts/setup.ps1 时自动下载、校验 SHA256 并缓存当前平台的已编译 Runtime；"
                   "无需 Node.js/Python 开发环境。下载失败应报告错误，禁止自行从源码编译。"
-                  "离线使用需先完成安装。项目源码始终在私有仓库，编译程序仍可被逆向分析。\n\n")
+                  "离线使用需先完成安装。项目源码始终在私有仓库，编译程序仍可被逆向分析。\n\n"
+                  "## 开发者离线诊断\n"
+                  "macOS：sh scripts/export-diagnostics.sh；Windows："
+                  "powershell -NoProfile -File scripts/export-diagnostics.ps1。"
+                  "不要求 Runtime 已启动；只导出已脱敏错误，默认最近 24 小时。\n\n")
         if skill_text.startswith("---"):
             pos = skill_text.find("---", 3)
             skill_text = skill_text[:pos + 3] + "\n\n" + notice + skill_text[pos + 3:]
@@ -160,7 +172,10 @@ def build(project, version, tag, source, mac, win, output, templates):
             f"# {project} 轻量 Skill\n\n首次使用需联网下载对应系统的编译版 Runtime。"
             "Skill 本身不包含任何编译程序或私有源码。"
             "运行脚本自动验证下载文件 SHA256、安装并缓存；后续启动复用缓存。"
-            "完整离线首次安装需另行取得同版本运行文件。\n\n" + readme)
+            "完整离线首次安装需另行取得同版本运行文件。\n\n"
+            "开发者诊断：macOS 运行 sh scripts/export-diagnostics.sh；"
+            "Windows 运行 powershell -NoProfile -File scripts/export-diagnostics.ps1。"
+            "即使服务未安装或无法启动也能导出本地已有的安全错误记录。\n\n" + readme)
         if project == "product-grabber":
             release = {"name": project, "version": version, "platforms": list(PLATFORMS),
                        "extensionId": "bbnfnhfbjagbmkcfilfnnnjpmoopcgba"}
