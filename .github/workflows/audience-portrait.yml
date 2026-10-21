@@ -260,5 +260,5 @@ jobs:
           options=()
           if [ "$PRERELEASE" = 'true' ]; then options+=(--prerelease); fi
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "Audience Portrait $VERSION" \
+            --target main --title "Audience Portrait $VERSION" \
             "${options[@]}" --notes "$notes" dist/release/*
