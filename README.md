@@ -19,7 +19,7 @@ EC-AI 私有源码的**公开编译和二进制发布仓库**。不托管业务�
 | Product Grabber | 私有 `product-scraping/product-grabber/package.json` 中的 `version` | **必须增加版本号**；相同版本不会重复构建，手动选择 `force` 可覆盖 |
 | Audience Portrait | 私有 `audience-portrait/` 目录 Git tree hash（`g<12位>`） | 该项目目录有代码改动、且相应版本尚未发布时自动构建 |
 
-旧的私有仓库 Actions 工作流将在公开迁移完成验证后删除，避免消耗私有 Actions 额度。业务和打包脚本不必从私有仓库迁移。
+旧的私有仓库 Actions 构建工作流已删除，避免消耗私有 Actions 额度。业务与编译脚本继续保留在私有仓库。
 
 ## 安全边界
 
