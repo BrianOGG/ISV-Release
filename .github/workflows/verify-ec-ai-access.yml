@@ -1,0 +1,42 @@
+name: Verify private EC-AI source access
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-ec-ai-access.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Read-only checkout test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ensure source credential is configured
+        shell: bash
+        env:
+          EC_AI_SOURCE_TOKEN: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+        run: |
+          if [ -z "$EC_AI_SOURCE_TOKEN" ]; then
+            echo "::error::Missing EC_AI_SOURCE_TOKEN repository secret"
+            exit 1
+          fi
+      - name: Checkout private EC-AI README only
+        uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: main
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          sparse-checkout: |
+            README.md
+          persist-credentials: false
+          path: source
+      - name: Verify private source access without revealing content
+        shell: bash
+        run: |
+          test -s source/README.md
+          echo "PASS: private EC-AI contents can be read"
