@@ -178,5 +178,5 @@ jobs:
           options=()
           if [ "$PRERELEASE" = 'true' ]; then options+=(--prerelease); fi
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "Product Grabber $VERSION" \
+            --target main --title "Product Grabber $VERSION" \
             "${options[@]}" --notes "$notes" dist/release/*
