@@ -42,7 +42,15 @@ jobs:
           boot="$HOME/Library/Application Support/ISV-Release/audience-portrait/logs"
           mkdir -p "$data" "$boot"
           timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          printf '{"schema_version":1,"time":"%s","module":"web_app_memory","stage":"task.portrait","type":"RuntimeError","platform":"dmp","message":"cookie-SECRET-TEST","stack":"RuntimeError: original details omitted\\n  File \"web_app_memory.py\", line 42, in worker"}\n' "$timestamp" > "$data/diagnostics.jsonl"
+          python3 - "$data/diagnostics.jsonl" "$timestamp" <<'PY'
+          import json,sys
+          record = {"schema_version":1,"time":sys.argv[2],"module":"web_app_memory",
+                    "stage":"task.portrait","type":"RuntimeError","platform":"dmp",
+                    "message":"cookie-SECRET-TEST",
+                    "stack":'RuntimeError: original details omitted\n  File "web_app_memory.py", line 42, in worker'}
+          with open(sys.argv[1],"w",encoding="utf-8") as f:
+              f.write(json.dumps(record) + "\n")
+          PY
           printf '{"schema_version":1,"time":"%s","module":"bootstrap","stage":"download","code":"runtime_download_failed"}\n' "$timestamp" > "$boot/bootstrap.jsonl"
           sh "$root/scripts/export-diagnostics.sh" --output "$root/report.json"
           python3 - "$root/report.json" <<'PY'
