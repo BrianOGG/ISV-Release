@@ -60,7 +60,7 @@ def source_assets(project, source, mac, win, stage, platform):
         if not (p / name).is_file():
             raise ValueError(f"missing runtime {p / name}")
         shutil.copy2(p / name, dest / name)
-        if platform == "macos-arm64":
+        if True:
             ext = stage / "ext"
             shutil.copytree(p / "ext", ext)
             windows_ext = win / "ext"
