@@ -12,6 +12,7 @@ on:
     workflows:
       - Product Grabber release (public builder)
       - Audience Portrait release (public builder)
+      - KOL Selection release (public builder)
     branches: [main]
     types: [completed]
   workflow_dispatch:
