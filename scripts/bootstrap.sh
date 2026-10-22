@@ -55,14 +55,14 @@ if [ ! -f "$CACHE/.ready" ]; then
   unzip -q "$STAGE/runtime.zip" -d "$STAGE/unpack"
   CURRENT_STAGE='assets'
   CURRENT_CODE='runtime_assets_missing'
-  test -f "$STAGE/unpack/runtime/$PLATFORM/$(if [ "$PROJECT" = product-grabber ]; then echo product-grabber; else echo audience-portrait; fi)"
+  test -f "$STAGE/unpack/runtime/$PLATFORM/$(if [ "$PROJECT" = product-grabber ]; then echo product-grabber; elif [ "$PROJECT" = kol-selection ]; then echo kol-selection; else echo audience-portrait; fi)"
   mv "$STAGE/unpack/runtime" "$STAGE/assets/runtime"
   if [ "$PROJECT" = "product-grabber" ]; then
     test -f "$STAGE/unpack/ext/manifest.json"
     mv "$STAGE/unpack/ext" "$STAGE/assets/ext"
     chmod u+x "$STAGE/assets/runtime/$PLATFORM/product-grabber"
   else
-    chmod u+x "$STAGE/assets/runtime/$PLATFORM/audience-portrait"
+    chmod u+x "$STAGE/assets/runtime/$PLATFORM/$(if [ "$PROJECT" = kol-selection ]; then echo kol-selection; else echo audience-portrait; fi)"
     chmod u+x "$STAGE/assets/runtime/$PLATFORM/"*.sh
   fi
   CURRENT_STAGE='cache'
