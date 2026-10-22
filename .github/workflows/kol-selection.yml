@@ -1,3 +1,4 @@
+# Retry first KOL dev build after Playwright Nuitka conflict fix (db2e7f67)
 name: KOL Selection release (public builder)
 on:
   workflow_dispatch:
