@@ -1,3 +1,4 @@
+# Dev rebuild requested for product source commit cc753d1ae668 (2026-10-22)
 name: Product Grabber release (public builder)
 on:
   workflow_dispatch:
