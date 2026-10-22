@@ -61,6 +61,18 @@ def main():
                                      cwd=binary.parent, env=environment,
                                      capture_output=True, text=True, timeout=35)
             if stopped.returncode != 0:
+                # Print only fixed, non-sensitive diagnostics from the isolated fixture.
+                print("Stop command exit code:", stopped.returncode, file=sys.stderr)
+                print("Stop command stdout:", stopped.stdout.strip()[:300], file=sys.stderr)
+                print("Stop command stderr:", stopped.stderr.strip()[:300], file=sys.stderr)
+                diagnosis = Path(root) / "data" / "logs" / "diagnostics.jsonl"
+                if diagnosis.is_file():
+                    for line in diagnosis.read_text(encoding="utf-8").splitlines()[-3:]:
+                        try:
+                            record = json.loads(line)
+                            print("Safe diagnostic:", {"stage": record.get("stage"), "error_type": record.get("error_type")}, file=sys.stderr)
+                        except (ValueError, TypeError):
+                            pass
                 raise AssertionError("Runtime stop command failed")
             proc.wait(timeout=15)
             print("KOL compiled runtime smoke passed", a.version)
