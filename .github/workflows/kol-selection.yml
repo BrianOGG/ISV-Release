@@ -1,0 +1,254 @@
+name: KOL Selection release (public builder)
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Optional stable version, blank = next independent dev version'
+        required: false
+        type: string
+  schedule:
+    - cron: '13 */2 * * *'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/kol-selection.yml']
+
+permissions:
+  contents: write
+concurrency:
+  group: isv-kol-selection-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+      source_sha: ${{ steps.check.outputs.source_sha }}
+      source_tree: ${{ steps.check.outputs.source_tree }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: main
+          sparse-checkout: kol-selection
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Validate version rules
+        run: python3 -m unittest discover -s builder/scripts -p test_resolve_version.py -v
+      - name: Resolve KOL dev release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_VERSION: ${{ inputs.release_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git -C source rev-parse HEAD)"
+          tree="$(git -C source rev-parse HEAD:kol-selection)"
+          python3 builder/scripts/resolve_version.py --project kol-selection \
+            --source-tree "$tree" --source-sha "$sha" --manual-version "$MANUAL_VERSION"
+
+  preflight:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          sparse-checkout: kol-selection
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          cache: pip
+          cache-dependency-path: source/kol-selection/config/requirements-build.txt
+      - name: Validate private Python modules and pinned dependencies
+        working-directory: source/kol-selection
+        run: |
+          python -m compileall -q backend
+          python -m pip install -r config/requirements-build.txt
+          python -m unittest discover -s tests -p test_runtime_cookies.py -v
+
+  build:
+    needs: [prepare, preflight]
+    if: needs.prepare.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: macos-14 }
+          - { platform: windows-x64, runner: windows-2022 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: source/kol-selection
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          sparse-checkout: kol-selection
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          cache: pip
+          cache-dependency-path: source/kol-selection/config/requirements-build.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: pnpm
+          cache-dependency-path: source/kol-selection/config/pnpm-lock.yaml
+      - name: Install pinned build dependencies
+        shell: bash
+        run: |
+          python -m venv .build-venv
+          if [ "${{ matrix.platform }}" = macos-arm64 ]; then
+            .build-venv/bin/python -m pip install -r config/requirements-build.txt
+          else
+            .build-venv/Scripts/python.exe -m pip install -r config/requirements-build.txt
+          fi
+      - name: Build compiled standalone runtime
+        shell: bash
+        env:
+          KOL_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          KOL_BUILD_ROOT: ${{ runner.temp }}/kol-compiled
+        run: |
+          if [ "${{ matrix.platform }}" = macos-arm64 ]; then
+            bash scripts/build_macos_arm64.sh
+          else
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows_x64.ps1
+          fi
+      - name: Archive macOS compiled runtime
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: |
+          ditto -c -k --keepParent "${{ runner.temp }}/kol-compiled/kol-selection-macos-arm64" "${{ runner.temp }}/kol-runtime.zip"
+      - name: Archive Windows compiled runtime
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          Compress-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'kol-compiled/kol-selection-windows-x64') -DestinationPath (Join-Path $env:RUNNER_TEMP 'kol-runtime.zip')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kol-runtime-${{ matrix.platform }}
+          path: ${{ runner.temp }}/kol-runtime.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  test-runtime:
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: macos-14, binary: kol-selection }
+          - { platform: windows-x64, runner: windows-2022, binary: kol-selection.exe }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kol-runtime-${{ matrix.platform }}
+          path: runtime-zip
+      - name: Extract macOS runtime and test compiled service
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kol-unpack"
+          ditto -x -k runtime-zip/kol-runtime.zip "$RUNNER_TEMP/kol-unpack"
+          exe="$RUNNER_TEMP/kol-unpack/kol-selection-macos-arm64/kol-selection"
+          chmod u+x "$exe"
+          python builder/scripts/smoke_kol_runtime.py --binary "$exe" --version '${{ needs.prepare.outputs.version }}'
+      - name: Extract Windows runtime and test compiled service
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          $unpack = Join-Path $env:RUNNER_TEMP 'kol-unpack'
+          Expand-Archive -LiteralPath 'runtime-zip/kol-runtime.zip' -DestinationPath $unpack
+          $exe = Join-Path $unpack 'kol-selection-windows-x64/kol-selection.exe'
+          python builder/scripts/smoke_kol_runtime.py --binary $exe --version '${{ needs.prepare.outputs.version }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Compiled KOL runtime failed smoke test' }
+
+  publish:
+    needs: [prepare, preflight, build, test-runtime]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          sparse-checkout: kol-selection/skills/kol-selection
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: kol-runtime-macos-arm64
+          path: platform/mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: kol-runtime-windows-x64
+          path: platform/win
+      - name: Assemble small Skill and signed-downloaded runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/scripts/assemble_lite.py \
+            --project kol-selection \
+            --version '${{ needs.prepare.outputs.version }}' \
+            --tag '${{ needs.prepare.outputs.tag }}' \
+            --source source --mac platform/mac/kol-runtime.zip --win platform/win/kol-runtime.zip \
+            --templates builder/scripts --output dist/release
+          test "$(stat -c %s "dist/release/kol-selection-skill-${{ needs.prepare.outputs.version }}.zip")" -lt 20000000
+          unzip -Z1 "dist/release/kol-selection-skill-${{ needs.prepare.outputs.version }}.zip" | grep -Fx 'SKILL.md'
+      - name: Publish immutable Dev Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.prepare.outputs.source_tree }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Refusing to overwrite immutable release $TAG"
+            exit 1
+          fi
+          notes="$(printf 'KOL Selection %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nmacOS ARM64 and Windows x64 packages. Download the Skill ZIP and run install before start. Browser components are prepared during installation.\n' "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
+          options=()
+          if [ "$PRERELEASE" = 'true' ]; then options+=(--prerelease); fi
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+            --target main --title "KOL Selection $VERSION" \
+            "${options[@]}" --notes "$notes" dist/release/*
