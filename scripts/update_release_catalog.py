@@ -14,6 +14,7 @@ END = "<!-- RELEASES:END -->"
 PROJECTS = (
     ("product-grabber", "Product Grabber", "天猫、京东商品信息采集与管理"),
     ("audience-portrait", "Audience Portrait", "多平台人群画像采集与 Excel 导出"),
+    ("kol-selection", "KOL Selection", "KOL 筛选、画像分析与报告工作台"),
 )
 VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-dev\.([1-9]\d*))?$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -59,7 +60,12 @@ def render_table(releases: list[dict], repository: str) -> str:
         "| --- | --- | --- | --- |",
     ]
     for slug, name, description in PROJECTS:
-        entry, version, asset = pick_latest(releases, slug)
+        try:
+            entry, version, asset = pick_latest(releases, slug)
+        except ValueError:
+            if slug == "kol-selection":
+                continue  # Display KOL only after first verified Skill is published.
+            raise
         tag = entry["tag_name"]
         base = f"https://github.com/{repository}/releases"
         download = f"{base}/download/{quote(tag)}/{quote(asset)}"
