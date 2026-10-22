@@ -35,6 +35,8 @@ jobs:
           run-id: ${{ inputs.source_run || '39762262769' }}
           github-token: ${{ github.token }}
       - name: Run isolated Windows runtime smoke using previous compiled binary
+        env:
+          PYTHONIOENCODING: utf-8
         shell: pwsh
         run: |
           $folder = Join-Path $env:RUNNER_TEMP 'kol-win-retest'
