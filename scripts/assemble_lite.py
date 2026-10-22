@@ -89,7 +89,8 @@ def source_assets(project, source, mac, win, stage, platform):
             else:
                 shutil.copy2(item, dest / item.name)
         shutil.rmtree(scratch)
-        name = "audience-portrait" if platform == "macos-arm64" else "audience-portrait.exe"
+        binary = "kol-selection" if project == "kol-selection" else "audience-portrait"
+        name = binary if platform == "macos-arm64" else binary + ".exe"
         if not (dest / name).is_file():
             raise ValueError(f"missing runtime {dest / name}")
         for file in dest.rglob("*"):
@@ -113,15 +114,24 @@ def build(project, version, tag, source, mac, win, output, templates):
             write_zip(staging, output / filename)
         hashes[platform] = sha(output / filename)
         (output / (filename + ".sha256")).write_text(f"{hashes[platform]}  {filename}\n")
-    source_skill = (source / "product-scraping/product-grabber/skills/product-grabber"
-                    if project == "product-grabber" else source / "audience-portrait/skills/audience-portrait")
+    if project not in {"product-grabber", "audience-portrait", "kol-selection"}:
+        raise ValueError("unknown project")
+    skill_paths = {
+        "product-grabber": "product-scraping/product-grabber/skills/product-grabber",
+        "audience-portrait": "audience-portrait/skills/audience-portrait",
+        "kol-selection": "kol-selection/skills/kol-selection",
+    }
+    source_skill = source / skill_paths[project]
     with tempfile.TemporaryDirectory() as tmp:
         stage = Path(tmp)
         (stage / "scripts").mkdir()
         (stage / "references").mkdir()
         (stage / "assets").mkdir()
-        for name in ("SKILL.md", "README.md"):
-            shutil.copy2(source_skill / name, stage / name)
+        shutil.copy2(source_skill / "SKILL.md", stage / "SKILL.md")
+        if (source_skill / "README.md").is_file():
+            shutil.copy2(source_skill / "README.md", stage / "README.md")
+        else:
+            (stage / "README.md").write_text("KOL 筛选工作台 Skill 安装说明。\n", encoding="utf-8")
         for platform_script in ("setup.sh", "setup.ps1"):
             suffix = platform_script.rsplit(".", 1)[-1]
             shutil.copy2(source_skill / "scripts" / platform_script, stage / "scripts" / f"setup-bundled.{suffix}")
@@ -180,7 +190,8 @@ def build(project, version, tag, source, mac, win, output, templates):
             release = {"name": project, "version": version, "platforms": list(PLATFORMS),
                        "extensionId": "bbnfnhfbjagbmkcfilfnnnjpmoopcgba"}
         else:
-            release = {"name": project, "version": version, "platforms": list(PLATFORMS), "workbenchPort": 8766,
+            port = 8788 if project == "kol-selection" else 8766
+            release = {"name": project, "version": version, "platforms": list(PLATFORMS), "workbenchPort": port,
                        "workbenchPath": "/", "runtimeEndpoint": "/api/runtime"}
         (stage / "assets" / "release.json").write_text(json.dumps(release, indent=2) + "\n")
         (stage / "assets" / "download.json").write_text(json.dumps({
