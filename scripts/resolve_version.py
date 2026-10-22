@@ -88,7 +88,7 @@ def list_releases(repository):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project", choices=("product-grabber", "audience-portrait"), required=True)
+    parser.add_argument("--project", choices=("product-grabber", "audience-portrait", "kol-selection"), required=True)
     parser.add_argument("--source-tree", required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--manual-version", default="")
