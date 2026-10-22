@@ -1,0 +1,44 @@
+name: Diagnose KOL compiled Windows runtime
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: 'Successful Windows build run containing kol-runtime-windows-x64'
+        required: true
+        default: '39762262769'
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/kol-windows-retest.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  windows-smoke:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kol-runtime-windows-x64
+          path: runtime-zip
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run || '39762262769' }}
+          github-token: ${{ github.token }}
+      - name: Run isolated Windows runtime smoke using previous compiled binary
+        shell: pwsh
+        run: |
+          $folder = Join-Path $env:RUNNER_TEMP 'kol-win-retest'
+          Expand-Archive -LiteralPath 'runtime-zip/kol-runtime.zip' -DestinationPath $folder
+          $exe = Join-Path $folder 'kol-selection-windows-x64/kol-selection.exe'
+          python builder/scripts/smoke_kol_runtime.py --binary $exe --version '1.0.0-dev.1'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows runtime smoke test failed' }
