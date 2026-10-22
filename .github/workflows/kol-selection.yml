@@ -79,7 +79,7 @@ jobs:
         run: |
           python -m compileall -q backend
           python -m pip install -r config/requirements-build.txt
-          python -m unittest discover -s tests -p test_runtime_cookies.py -v
+          python -m unittest discover -s tests -p test_kol_names.py -v
 
   build:
     needs: [prepare, preflight]
