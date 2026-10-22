@@ -57,7 +57,7 @@ try {
             $FailureStage = 'assets'
             $FailureCode = 'runtime_assets_missing'
             $Runtime = Join-Path $Unpack 'runtime'
-            $Binary = if ($Project -eq 'product-grabber') { 'product-grabber.exe' } else { 'audience-portrait.exe' }
+            $Binary = if ($Project -eq 'product-grabber') { 'product-grabber.exe' } elseif ($Project -eq 'kol-selection') { 'kol-selection.exe' } else { 'audience-portrait.exe' }
             if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $Runtime $Platform) $Binary) -PathType Leaf)) {
                 throw 'missing_runtime_binary'
             }
