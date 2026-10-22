@@ -9,6 +9,7 @@
 | --- | --- | --- | --- |
 | **Product Grabber** | 天猫、京东商品信息采集与管理 | `1.0.0-dev.3`（开发版） | [下载 Skill ZIP](https://github.com/BrianOGG/ISV-Release/releases/download/product-grabber-v1.0.0-dev.3/product-grabber-skill-1.0.0-dev.3.zip) · [版本详情](https://github.com/BrianOGG/ISV-Release/releases/tag/product-grabber-v1.0.0-dev.3) |
 | **Audience Portrait** | 多平台人群画像采集与 Excel 导出 | `1.0.0-dev.2`（开发版） | [下载 Skill ZIP](https://github.com/BrianOGG/ISV-Release/releases/download/audience-portrait-v1.0.0-dev.2/audience-portrait-skill-1.0.0-dev.2.zip) · [版本详情](https://github.com/BrianOGG/ISV-Release/releases/tag/audience-portrait-v1.0.0-dev.2) |
+| **KOL Selection** | KOL 筛选、画像分析与报告工作台 | `1.0.0-dev.1`（开发版） | [下载 Skill ZIP](https://github.com/BrianOGG/ISV-Release/releases/download/kol-selection-v1.0.0-dev.1/kol-selection-skill-1.0.0-dev.1.zip) · [版本详情](https://github.com/BrianOGG/ISV-Release/releases/tag/kol-selection-v1.0.0-dev.1) |
 <!-- RELEASES:END -->
 
 ## 使用
