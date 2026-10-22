@@ -1,4 +1,4 @@
-# Retry first KOL dev build after Playwright Nuitka conflict fix (db2e7f67)
+# Retry first KOL dev build after Windows UTF-8 runtime fix (d8c8d88e)
 name: KOL Selection release (public builder)
 on:
   workflow_dispatch:
