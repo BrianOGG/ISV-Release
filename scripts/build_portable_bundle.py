@@ -237,7 +237,30 @@ def build(project,platform_name,version,source,core,managed,output):
         cmd=[venv_python,"-I",stage/"ecai_launcher.py","--release",release]
         started=False
         try:
-            task("NATIVE_CORE_START",cmd+["start","--port",str(checked_port)],env=env,timeout=95)
+            try:
+                task("NATIVE_CORE_START",cmd+["start","--port",str(checked_port)],env=env,timeout=95)
+            except RuntimeError:
+                import re
+                data=Path(env["KOL_DATA_DIR"] if project=="kol-selection" else env["E2E_DATA_DIR"])
+                logfile=data/"logs"/"server.log"
+                diagfile=data/"logs"/"diagnostics.jsonl"
+                text=logfile.read_text(encoding="utf-8",errors="replace") if logfile.is_file() else ""
+                exceptions=re.findall(r"(?:^|\\n)([A-Za-z_][A-Za-z0-9_]*?(?:Error|Exception)):",text)
+                print("PORTABLE_CHILD_LOG_EXISTS="+str(logfile.is_file()).lower(),flush=True)
+                print("PORTABLE_CHILD_LOG_BYTES_PRESENT="+str(bool(text)).lower(),flush=True)
+                print("PORTABLE_CHILD_UVICORN_STARTED="+str("Application startup complete" in text).lower(),flush=True)
+                if exceptions:
+                    print("PORTABLE_CHILD_LAST_ERROR_CLASS="+exceptions[-1],flush=True)
+                if diagfile.is_file():
+                    try:
+                        rows=[json.loads(x) for x in diagfile.read_text(encoding="utf-8").splitlines() if x]
+                        if rows:
+                            print("PORTABLE_MANAGER_LAST_ERROR_TYPE="+str(rows[-1].get("error_type","NONE")),flush=True)
+                            print("PORTABLE_MANAGER_LAST_STAGE="+str(rows[-1].get("stage","NONE")).replace(".","_").upper(),flush=True)
+                    except (OSError,ValueError):
+                        pass
+                print("PORTABLE_RUNTIME_RECORD_EXISTS="+str((data/"runtime.json").is_file()).lower(),flush=True)
+                raise
             started=True
             task("NATIVE_CORE_STATUS",cmd+["status","--port",str(checked_port)],env=env,timeout=30)
             print("PORTABLE_STAGE: VERIFY_WEB_UI",flush=True)
