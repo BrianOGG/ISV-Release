@@ -1,5 +1,5 @@
 # Reuses native Core ZIP artifacts from already-successful KOL/E2E build jobs. LF/CRLF-only lock hash normalization verified.
-# This is a one-shot recovery after an assembler contract mismatch. Git CRLF-only repair validated. No Nuitka.
+# This is a one-shot recovery after an assembler contract mismatch. Git CRLF-only repair validated. Installer stage diagnosis uses sanitized codes. No Nuitka.
 name: Resume verified E2E and KOL Core release
 on:
   push:
