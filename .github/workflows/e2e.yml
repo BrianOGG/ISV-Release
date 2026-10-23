@@ -158,10 +158,19 @@ jobs:
           set -euo pipefail
           started="$(date +%s)"
           result=0
+          # Keep compiler logs in ephemeral runner only; never send private
+          # module names, source paths or crash reports to public Actions logs.
           python scripts/build_runtime.py \
             --platform '${{ matrix.platform }}' \
             --version '${{ needs.prepare.outputs.version }}' \
-            --output-dir "$RUNNER_TEMP/module-output" || result=$?
+            --output-dir "$RUNNER_TEMP/module-output" > "$RUNNER_TEMP/native-build-private.log" 2>&1 || result=$?
+          if [ "$result" -ne 0 ]; then
+            if grep -Eq 'C1060|C1002|out of heap space' "$RUNNER_TEMP/native-build-private.log"; then
+              echo "::error::Native compiler memory exhaustion; compile fewer private modules or reduce --jobs."
+            else
+              echo "::error::Native module compilation failed (exit $result); private compiler logs withheld."
+            fi
+          fi
           elapsed=$(( $(date +%s) - started ))
           if [ "$result" -eq 0 ]; then state=passed; else state=failed; fi
           printf '| E2E | %s | %ss | %s | native modules only |\n' \
