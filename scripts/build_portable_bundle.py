@@ -97,7 +97,17 @@ def chrome_for_testing(root,platform_name):
                     p=Path(member.filename)
                     if (p.is_absolute() or ".." in p.parts or member.filename.startswith(("/", "\\"))):
                         raise RuntimeError("CHROME_UNSAFE_ARCHIVE")
-                zip.extractall(root/"browser")
+                if platform_name=="macos-arm64":
+                    # ditto retains signed macOS app bundle symlink layout.
+                    import subprocess
+                    with tempfile.NamedTemporaryFile(suffix=".zip") as z:
+                        temp.seek(0)
+                        shutil.copyfileobj(temp,z)
+                        z.flush()
+                        (root/"browser").mkdir(parents=True,exist_ok=True)
+                        task("EXTRACT_SIGNED_CHROME_APP",["ditto","-xk",z.name,root/"browser"])
+                else:
+                    zip.extractall(root/"browser")
     relative=("browser/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
               if platform_name=="macos-arm64" else "browser/chrome-win64/chrome.exe")
     executable=root/relative
@@ -134,6 +144,12 @@ def build(project,platform_name,version,source,core,managed,output):
         install_base=[sys.executable,"-m","pip","install","--isolated","--disable-pip-version-check",
                       "--no-input","--no-cache-dir","--require-hashes","--no-deps","--target",site]
         task("INSTALL_PINNED_BOOTSTRAP",install_base+["--only-binary=:all:","-r",bootstrap])
+        if project == "e2e":
+            # Host CI pip builds the one verified public UC sdist into portable
+            # installed files; these build tools do NOT run on the user device.
+            task("INSTALL_PUBLIC_BUILD_TOOLS",[
+                sys.executable,"-m","pip","install","--disable-pip-version-check",
+                "--no-input","setuptools==80.9.0","wheel==0.45.1","packaging==25.0"])
         flags=["--only-binary=:all:"]
         if project=="e2e":
             # The single pinned public sdist is converted to installed files on CI,
