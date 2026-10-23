@@ -1,13 +1,17 @@
-# Manual, source-protected native-module build. No standalone Nuitka binaries,
-# private Python/C/object cache, or automatic compile triggers.
+# Codex v2 native-Core contract. Only E2E and KOL use this pipeline.
+# No third-party Python compilation and no private source/C/object uploads.
 name: E2E release (public builder)
 on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Optional stable SemVer; blank = next independent dev version'
-        required: false
+        description: 'Optional stable version; blank = next dev'
         type: string
+        required: false
+  push:
+    branches: [main]
+    paths: ['.github/workflows/e2e.yml']
+
 permissions:
   contents: read
 concurrency:
@@ -16,6 +20,7 @@ concurrency:
 
 jobs:
   prepare:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[module-build]')
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.resolve.outputs.build }}
@@ -37,17 +42,19 @@ jobs:
           path: source
           token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
           persist-credentials: false
-      - name: Test public version and source-fingerprint contracts
+      - name: Verify public release versioning and assembly contracts
         shell: bash
         run: |
+          set -euo pipefail
           python3 -m unittest discover -s builder/scripts -p test_resolve_version.py -v
           python3 -m unittest discover -s builder/scripts -p test_source_input_fingerprint.py -v
-      - name: Resolve source-only release fingerprint
+          python3 -m unittest discover -s builder/scripts -p test_handoff_core.py -v
+      - name: Resolve immutable source SHA and project build fingerprint
         id: resolve
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           MANUAL_VERSION: ${{ inputs.release_version }}
-        shell: bash
         run: |
           set -euo pipefail
           sha="$(git -C source rev-parse HEAD)"
@@ -62,10 +69,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: builder
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
           repository: BrianOGG/EC-AI
           ref: ${{ needs.prepare.outputs.source_sha }}
           sparse-checkout: e2e
@@ -77,36 +80,32 @@ jobs:
           python-version: '3.12.10'
           cache: pip
           cache-dependency-path: source/e2e/config/requirements-build.txt
-      - name: Require native-module source contract (fail fast)
+      - name: Validate native Core source contract before slow compile
         working-directory: source/e2e
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import sys
-          sys.path.insert(0, '../../builder/scripts')
-          from module_archive import check_lock
-          script = Path('scripts/build_runtime.py')
-          lock = Path('config/requirements-runtime.txt')
-          if not script.is_file() or not lock.is_file():
-              raise SystemExit('MODULE_BUILD_OR_RUNTIME_LOCK_MISSING')
-          if '--mode=standalone' in script.read_text(encoding='utf-8'):
-              raise SystemExit('LEGACY_STANDALONE_BUILDER_NOT_ALLOWED')
-          try:
-              check_lock(lock.read_bytes())
-          except ValueError as exc:
-              raise SystemExit('RUNTIME_LOCK_INVALID:' + str(exc)) from None
-          print('Native-module source contract passed')
+          p=Path("scripts/build_runtime.py")
+          t=p.read_text(encoding="utf-8")
+          assert "--mode=standalone" not in t, "Legacy standalone builder blocked"
+          assert "--reuse-core" in t, "Native Core v2 input contract missing"
+          assert Path("scripts/verify_native_core.py").is_file(), "Native import POC missing"
+          assert Path("config/requirements-runtime-macos-arm64.txt").is_file()
+          assert Path("config/requirements-runtime-windows-x64.txt").is_file()
+          assert Path("skills/e2e/scripts/ecai_install.py").is_file()
+          assert Path("skills/e2e/scripts/ecai_launcher.py").is_file()
+          print("Private-source v2 packaging contract passed")
           PY
-      - name: Offline private-source regression tests
+      - name: Run relevant source-side offline regressions
         working-directory: source/e2e
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install -r config/requirements-build.txt
-          python -m compileall -q Crawler/src
-          PYTHONPATH=Crawler/src python -m unittest discover -s Crawler/tests -p test_request_pacing.py -v
+          python -m pip install -r config/requirements-build.txt > "$RUNNER_TEMP/private-pip.log" 2>&1
+          python -m unittest discover -s Crawler/tests -p test_build_runtime_options.py -v
+          python -m unittest discover -s Crawler/tests -p test_packaged_runtime_control.py -v
 
   build:
     needs: [prepare, preflight]
@@ -140,89 +139,45 @@ jobs:
           python-version: '3.12.10'
           cache: pip
           cache-dependency-path: source/e2e/config/requirements-build.txt
-      - uses: pnpm/action-setup@v4
-        with:
-          version: '11.25.0'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '26'
-          cache: pnpm
-          cache-dependency-path: source/e2e/config/pnpm-lock.yaml
-      - name: Install pinned build-time tools
-        run: python -m pip install -r config/requirements-build.txt
-      - name: Compile EC-AI private modules only (no third-party compilation)
-        env:
-          COMPILED_VERSION: ${{ needs.prepare.outputs.version }}
-          NUITKA_DISABLE_CACHE: '1'
+      - name: Install build dependencies from immutable source version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r config/requirements-build.txt > "$RUNNER_TEMP/private-pip.log" 2>&1
+      - name: Compile PRIVATE native modules only
+        shell: bash
         run: |
           set -euo pipefail
           started="$(date +%s)"
           result=0
-          # Keep compiler logs in ephemeral runner only; never send private
-          # module names, source paths or crash reports to public Actions logs.
           python scripts/build_runtime.py \
             --platform '${{ matrix.platform }}' \
             --version '${{ needs.prepare.outputs.version }}' \
-            --output-dir "$RUNNER_TEMP/module-output" > "$RUNNER_TEMP/native-build-private.log" 2>&1 || result=$?
-          if [ "$result" -ne 0 ]; then
-            if grep -Eq 'C1060|C1002|out of heap space' "$RUNNER_TEMP/native-build-private.log"; then
-              echo "::error::Native compiler memory exhaustion; compile fewer private modules or reduce --jobs."
-            else
-              echo "::error::Native module compilation failed (exit $result); private compiler logs withheld."
-            fi
-          fi
+            --output-dir "$RUNNER_TEMP/native-core-build" \
+            > "$RUNNER_TEMP/native-compiler-private.log" 2>&1 || result=$?
           elapsed=$(( $(date +%s) - started ))
+          if [ "$result" -ne 0 ]; then echo "::error::Native Core compile failed; raw logs withheld because private-source details may appear"; fi
           if [ "$result" -eq 0 ]; then state=passed; else state=failed; fi
-          printf '| E2E | %s | %ss | %s | native modules only |\n' \
-            '${{ matrix.platform }}' "$elapsed" "$state" >> "$GITHUB_STEP_SUMMARY"
+          printf '| E2E | %s | %ss | %s |\n' '${{ matrix.platform }}' "$elapsed" "$state" >> "$GITHUB_STEP_SUMMARY"
           exit "$result"
-      - name: Validate output and make public-safe native archive
-        run: |
-          set -euo pipefail
-          python "$GITHUB_WORKSPACE/builder/scripts/package_module_artifact.py" \
-            --root "$RUNNER_TEMP/module-output" \
-            --project e2e --platform '${{ matrix.platform }}' \
-            --version '${{ needs.prepare.outputs.version }}' \
-            --output "$RUNNER_TEMP/module-runtime.zip"
-      - name: Upload only pre-validated compiled-module archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-native-${{ matrix.platform }}
-          path: ${{ runner.temp }}/module-runtime.zip
-          if-no-files-found: error
-          retention-days: 3
-
-  test-runtime:
-    needs: [prepare, build]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { platform: macos-arm64, runner: macos-14 }
-          - { platform: windows-x64, runner: windows-2022 }
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: builder
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12.10'
-      - uses: actions/download-artifact@v4
-        with:
-          name: e2e-native-${{ matrix.platform }}
-          path: native
-      - name: Install hash-locked public wheels and test private compiled modules
+      - name: Validate final Core bytes and package without source/debug files
         shell: bash
         run: |
           set -euo pipefail
-          python builder/scripts/smoke_module_runtime.py \
-            --archive native/module-runtime.zip --project e2e \
-            --platform '${{ matrix.platform }}' --version '${{ needs.prepare.outputs.version }}'
+          python "$GITHUB_WORKSPACE/builder/scripts/core_handoff_archive.py" \
+            --directory "$RUNNER_TEMP/native-core-build/e2e-core-${{ matrix.platform }}" \
+            --output "$RUNNER_TEMP/native-core.zip" \
+            --project e2e --platform '${{ matrix.platform }}' \
+            --version '${{ needs.prepare.outputs.version }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-core-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-core.zip
+          if-no-files-found: error
+          retention-days: 3
 
   assemble:
-    needs: [prepare, preflight, build, test-runtime]
+    needs: [prepare, preflight, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -239,62 +194,78 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: e2e-native-macos-arm64
+          name: e2e-core-macos-arm64
           path: native/mac
       - uses: actions/download-artifact@v4
         with:
-          name: e2e-native-windows-x64
+          name: e2e-core-windows-x64
           path: native/win
-      - name: Assemble immutable Runtime archives and <20 MB Skill
+      - name: Assemble audited ECAI bootstrap and immutable Core ZIPs
         shell: bash
         run: |
           set -euo pipefail
-          python3 builder/scripts/assemble_modules.py \
+          python3 builder/scripts/assemble_handoff.py \
             --project e2e --version '${{ needs.prepare.outputs.version }}' \
             --tag '${{ needs.prepare.outputs.tag }}' \
-            --source source --mac native/mac/module-runtime.zip \
-            --win native/win/module-runtime.zip \
-            --templates builder/scripts --output dist/release
+            --source source --mac native/mac/native-core.zip \
+            --win native/win/native-core.zip --output dist/release
       - uses: actions/upload-artifact@v4
         with:
-          name: e2e-module-release-bundle
+          name: e2e-handoff-bundle
           path: dist/release/*
           if-no-files-found: error
           retention-days: 3
 
-  verify-final-skill:
+  verify:
     needs: [prepare, assemble]
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: macos-14 }
+          - { platform: windows-x64, runner: windows-2022 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
           path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          sparse-checkout: e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12.10'
       - uses: actions/download-artifact@v4
         with:
-          name: e2e-module-release-bundle
-          path: release-bundle
-      - name: PowerShell 5.1 install/start/status/stop of actual Skill
-        shell: pwsh
+          name: e2e-handoff-bundle
+          path: artifacts
+      - name: Real native imports, PowerShell/sh Skill, 23-KOL demo or E2E API
+        shell: bash
         run: |
-          $v = '${{ needs.prepare.outputs.version }}'
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder/scripts/test_module_skill_install.ps1 -Project 'e2e' -SkillZip "release-bundle/e2e-skill-$v.zip" -RuntimeZip "release-bundle/e2e-runtime-windows-x64-$v.zip"
-          if ($LASTEXITCODE -ne 0) { throw 'Native-module final Skill failed Windows 5.1 smoke' }
+          set -euo pipefail
+          python builder/scripts/smoke_handoff.py \
+            --project e2e \
+            --source source/e2e \
+            --skill "artifacts/e2e-skill-${{ needs.prepare.outputs.version }}.zip" \
+            --core "artifacts/e2e-core-${{ matrix.platform }}-${{ needs.prepare.outputs.version }}.zip"
 
   publish:
-    needs: [prepare, assemble, verify-final-skill]
+    needs: [prepare, assemble, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: e2e-module-release-bundle
+          name: e2e-handoff-bundle
           path: dist/release
-      - name: Publish immutable source-protected native-module release
+      - name: Publish only after both platforms verify final installer
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -306,13 +277,12 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Immutable release already exists"
+            echo "::error::Refuse replacing immutable existing release"
             exit 1
           fi
-          notes="$(printf 'E2E %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nNative CPython 3.12 private modules only (.so / .pyd); public third-party packages are installed into an isolated venv by the Skill. SHA256-verified downloads, no private Python source or C intermediates in release.\n' \
-            "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
+          notes="$(printf 'E2E %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nNuitka native Core CPython 3.12, independently hash-locked third-party dependencies installed by included ECAI Skill. No private source in public release. Native import and installed runtime lifecycle tested on Windows and macOS.\n' "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
           options=()
-          if [ "$PRERELEASE" = true ]; then options+=(--prerelease); fi
+          if [ "$PRERELEASE" = "true" ]; then options+=(--prerelease); fi
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
             --target main --title "E2E $VERSION" \
             "\${options[@]}" --notes "$notes" dist/release/*
