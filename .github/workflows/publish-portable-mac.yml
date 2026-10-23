@@ -1,0 +1,118 @@
+# Publishes already CI-verified macOS ARM64 portable runtime for immediate hands-on test.
+# Windows remains gated independently. Never recompiles private Core.
+name: Publish portable macOS test candidates
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-portable-mac.yml']
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish-mac:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: kol-selection, version: 1.0.0-dev.2 }
+          - { project: e2e, version: 1.0.0-dev.1 }
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: e9dee54b4befc0609088f2b3f4fd9a685b91b086
+          sparse-checkout: |
+            kol-selection/skills/kol-selection
+            e2e/skills/e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-${{ matrix.project }}-macos-arm64
+          run-id: 39937925198
+          github-token: ${{ github.token }}
+          path: download
+      - name: Assemble source-protected Mac-only Skill from successful Runtime
+        shell: bash
+        env:
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          python3 - <<'PY'
+          import hashlib,json,os,shutil,tarfile,zipfile
+          from pathlib import Path
+          project=os.environ["PROJECT"];version=os.environ["VERSION"]
+          skill=Path("source")/project/"skills"/project
+          filename=f"{project}-portable-macos-arm64-{version}.tar.gz"
+          archive=Path("download")/filename
+          if not archive.is_file():raise SystemExit("PORTABLE_MAC_ARTIFACT_MISSING")
+          with tarfile.open(archive,"r:gz") as tar:
+              member=next((m for m in tar.getmembers() if m.name in ("./portable.json","portable.json")),None)
+              if member is None:raise SystemExit("PORTABLE_MAC_METADATA_MISSING")
+              metadata=json.load(tar.extractfile(member))
+          if not (metadata.get("project")==project and metadata.get("version")==version
+                  and metadata.get("platform")=="macos-arm64" and
+                  metadata.get("packages_preinstalled") is True):
+              raise SystemExit("PORTABLE_MAC_METADATA_MISMATCH")
+          tag=f"{project}-portable-mac-{version}"
+          url=f"https://github.com/BrianOGG/ISV-Release/releases/download/{tag}/{filename}"
+          digest=hashlib.sha256(archive.read_bytes()).hexdigest()
+          exe=metadata["python_executable"]
+          if not exe.startswith("python/") or ".." in Path(exe).parts:
+              raise SystemExit("PORTABLE_MAC_PYTHON_PATH_INVALID")
+          config="\n".join((f"PORTABLE_URL={url}",f"PORTABLE_SHA256={digest}",
+                             f"PORTABLE_VERSION={version}",f"PORTABLE_PYTHON={exe}",""))
+          txt=(skill/"SKILL.md").read_text(encoding="utf-8")
+          txt=txt.replace("首次安装需要 Python 3.12 和网络连接。若缺少 Python，请从 python.org 安装对应版本后重试。",
+                  "此便携测试版自带 Python 3.12.10、第三方依赖和 Chromium/Chrome，不需要安装 Python 或 pip。")
+          txt+=("\n## macOS ARM64 便携测试候选\n仅支持 Apple Silicon Mac。"
+                "先执行 sh scripts/setup.sh install，然后执行 sh scripts/setup.sh start。"
+                "首次需要从 GitHub 下载完整 Runtime；后续无需配置 Python 依赖。\n")
+          entries={"SKILL.md":txt.encode("utf-8"),
+                   "scripts/setup.sh":(skill/"scripts/setup-portable.sh").read_bytes(),
+                   "scripts/ecai_launcher.py":(skill/"scripts/ecai_launcher.py").read_bytes(),
+                   "assets/portable-macos-arm64.conf":config.encode("ascii")}
+          dest=Path("release")/filename
+          shutil.copyfile(archive,dest)
+          skillname=f"{project}-portable-mac-skill-{version}.zip"
+          with zipfile.ZipFile(Path("release")/skillname,"w",compression=zipfile.ZIP_DEFLATED) as z:
+              for path,value in sorted(entries.items()):z.writestr(path,value)
+          with (Path("release")/"SHA256SUMS.txt").open("w") as stream:
+              for x in sorted(Path("release").iterdir()):
+                  if x.is_file() and x.name!="SHA256SUMS.txt":
+                      h=hashlib.sha256(x.read_bytes()).hexdigest()
+                      stream.write(h+"  "+x.name+"\n")
+          print("Verified Mac-only candidate asset ready; native Core start/UI/stop passed CI")
+          PY
+          cd release
+          sha256sum --check SHA256SUMS.txt
+      - name: Publish signed-hash Mac native pre-release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          cd release
+          tag="$PROJECT-portable-mac-$VERSION"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Refuse overwriting existing Mac preview"
+            exit 1
+          fi
+          gh release create "$tag" -R "$GITHUB_REPOSITORY" \
+            --target main --prerelease \
+            --title "$PROJECT $VERSION portable macOS test candidate" \
+            --notes "macOS ARM64 hands-on candidate. Preinstalled CPython 3.12.10, all public runtime dependencies, app browser and already-built private native Core. CI successfully tested native version, doctor, start/status/web/stop. No pip or system Python on target Mac. Windows is still separately under validation. User login and business functions require hands-on testing." \
+            ./*
