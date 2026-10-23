@@ -27,5 +27,16 @@ check("CPYTHON_ENV",lambda:mod.check_python(require_venv=True))
 check("PRIVATE_CORE_INVENTORY",lambda:mod.verify_release(a.core))
 entry=check("PRIVATE_CORE_IMPORT",lambda:mod.load_entry(a.core))
 print("PORTABLE_DIAG=PRIVATE_CORE_IMPORT_OK")
-check("PRIVATE_ENTRY_VERSION",lambda:entry(["version"]))
-print("PORTABLE_DIAG=PRIVATE_ENTRY_VERSION_OK")
+code=check("PRIVATE_ENTRY_VERSION",lambda:entry(["version"]))
+if code == 0:
+    print("PORTABLE_DIAG=PRIVATE_ENTRY_VERSION_OK")
+else:
+    print("PORTABLE_DIAG=PRIVATE_ENTRY_VERSION_RETURN_NONZERO")
+    package="backend._build_resources" if a.core.joinpath("core-build.json").is_file() and __import__("json").loads(a.core.joinpath("core-build.json").read_text()).get("project")=="kol-selection" else "_build_resources"
+    try:
+        resources=__import__(package,fromlist=["VERSION"])
+        value=getattr(resources,"VERSION",None)
+        print("PORTABLE_DIAG=VERSION_RESOURCE_FOUND" if isinstance(value,str) else "PORTABLE_DIAG=VERSION_RESOURCE_MISSING")
+    except BaseException as err:
+        print("PORTABLE_DIAG=VERSION_RESOURCE_"+type(err).__name__)
+    raise SystemExit(1)
