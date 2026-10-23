@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import socket
 import subprocess
+import urllib.request
 import sys
 import tarfile
 import tempfile
@@ -197,6 +199,27 @@ def build(project,platform_name,version,source,core,managed,output):
                                    "--release",release,"version"],env=env,timeout=45)
         task("NATIVE_CORE_DOCTOR",[venv_python,"-I",stage/"ecai_launcher.py",
                                   "--release",release,"doctor"],env=env,timeout=60)
+        env["KOL_DATA_DIR"]=str(stage/"test-kol-data")
+        env["E2E_DATA_DIR"]=str(stage/"test-e2e-data")
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1",0))
+            checked_port=probe.getsockname()[1]
+        cmd=[venv_python,"-I",stage/"ecai_launcher.py","--release",release]
+        started=False
+        try:
+            task("NATIVE_CORE_START",cmd+["start","--port",str(checked_port)],env=env,timeout=95)
+            started=True
+            task("NATIVE_CORE_STATUS",cmd+["status","--port",str(checked_port)],env=env,timeout=30)
+            print("PORTABLE_STAGE: VERIFY_WEB_UI",flush=True)
+            opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            try:
+                with opener.open("http://127.0.0.1:"+str(checked_port)+"/",timeout=20) as response:
+                    if response.status!=200 or b"<html" not in response.read(30000).lower():
+                        raise RuntimeError("WEB_UI_UNAVAILABLE")
+            except Exception:
+                raise RuntimeError("WEB_UI_UNAVAILABLE") from None
+        finally:
+            if started:task("NATIVE_CORE_STOP",cmd+["stop","--port",str(checked_port)],env=env,timeout=60)
         # pyvenv.cfg contains absolute host paths, so do not distribute this
         # staging venv. The Skill creates it locally in milliseconds without pip.
         shutil.rmtree(stage/"venv")
