@@ -196,7 +196,7 @@ jobs:
           python builder/scripts/smoke_kol_runtime.py --binary $exe --version '${{ needs.prepare.outputs.version }}'
           if ($LASTEXITCODE -ne 0) { throw 'Compiled KOL runtime failed smoke test' }
 
-  publish:
+  assemble:
     needs: [prepare, preflight, build, test-runtime]
     runs-on: ubuntu-latest
     steps:
@@ -232,24 +232,9 @@ jobs:
             --templates builder/scripts --output dist/release
           test "$(stat -c %s "dist/release/kol-selection-skill-${{ needs.prepare.outputs.version }}.zip")" -lt 20000000
           unzip -Z1 "dist/release/kol-selection-skill-${{ needs.prepare.outputs.version }}.zip" | grep -Fx 'SKILL.md'
-      - name: Publish immutable Dev Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-          SOURCE_TREE: ${{ needs.prepare.outputs.source_tree }}
-          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Refusing to overwrite immutable release $TAG"
-            exit 1
-          fi
-          notes="$(printf 'KOL Selection %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nmacOS ARM64 and Windows x64 packages. Download the Skill ZIP and run install before start. Browser components are prepared during installation.\n' "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
-          options=()
-          if [ "$PRERELEASE" = 'true' ]; then options+=(--prerelease); fi
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-            --target main --title "KOL Selection $VERSION" \
-            "${options[@]}" --notes "$notes" dist/release/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kol-release-bundle
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
