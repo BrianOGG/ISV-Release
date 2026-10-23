@@ -238,3 +238,22 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
           retention-days: 7
+
+  verify-final-skill:
+    needs: [prepare, assemble]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: kol-release-bundle
+          path: release-bundle
+      - name: Test actual packaged Skill on Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $version = '${{ needs.prepare.outputs.version }}'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder/scripts/test_kol_skill_install.ps1 -SkillZip "release-bundle/kol-selection-skill-$version.zip" -RuntimeZip "release-bundle/kol-selection-runtime-windows-x64-$version.zip"
+          if ($LASTEXITCODE -ne 0) { throw 'Final KOL Skill installation test failed' }
