@@ -23,7 +23,7 @@ PYTHON_VERSION = "3.12.10"
 PROJECTS = ("kol-selection", "e2e")
 PLATFORMS = ("macos-arm64", "windows-x64")
 NAME = "ecai-environment-cp312"
-UC = re.compile(r"(?m)^undetected-chromedriver==3\.5\.5\s*\\\s*\n\s*--hash=sha256:([0-9a-f]{64})(?:\s|$)")
+UC = re.compile(rb"(?m)^undetected-chromedriver==3\.5\.5\s*\\\s*\n\s*--hash=sha256:([0-9a-f]{64})(?:\s|$)")
 
 def sha(path):
     h = hashlib.sha256()
@@ -63,7 +63,8 @@ def portable_python(python_dir):
     if not root.is_dir():
         raise RuntimeError("MANAGED_PYTHON_MISSING")
     candidates = [p for p in root.rglob("python.exe" if os.name == "nt" else "python3.12")
-                  if p.is_file() and ("install" in p.parts or "bin" in p.parts)]
+                  if p.is_file()]
+    print("ENV_STAGE: found managed Python executable candidates="+str(len(candidates)),flush=True)
     for candidate in candidates:
         result = subprocess.run(
             [str(candidate), "-I", "-c",
@@ -71,6 +72,7 @@ def portable_python(python_dir):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
         if result.returncode == 0:
             return candidate
+        print("ENV_STAGE: candidate Python failed interpreter self-check",flush=True)
     raise RuntimeError("MANAGED_PYTHON_EXECUTION_FAILED")
 
 def original_lock(source, project, plat, kind):
@@ -92,7 +94,7 @@ def uc_wheel(host_python, original, work, wheels):
     if not match:
         raise RuntimeError("UC_SOURCE_HASH_MISSING")
     req = work/"uc-source-pin.txt"
-    req.write_text("undetected-chromedriver==3.5.5 --hash=sha256:"+match.group(1)+"\n")
+    req.write_text("undetected-chromedriver==3.5.5 --hash=sha256:"+match.group(1).decode("ascii")+"\n")
     incoming = work/"source-dist"
     incoming.mkdir()
     sh(host_python, "-m", "pip", "download", "--disable-pip-version-check",
@@ -114,7 +116,7 @@ def uc_wheel(host_python, original, work, wheels):
 def update_uc_lock(raw, wheel_hash):
     if not UC.search(raw):
         raise RuntimeError("UC_SOURCE_HASH_MISSING")
-    replaced, n = UC.subn("undetected-chromedriver==3.5.5 --hash=sha256:"+wheel_hash+"\n",raw)
+    replaced, n = UC.subn(b"undetected-chromedriver==3.5.5 --hash=sha256:"+wheel_hash.encode("ascii")+b"\n",raw)
     if n != 1:
         raise RuntimeError("UC_REPLACEMENT_NOT_UNIQUE")
     return replaced
