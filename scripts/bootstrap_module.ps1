@@ -10,11 +10,13 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $Python = ''
 $Prefix = @()
-if (Get-Command py.exe -ErrorAction SilentlyContinue) {
+if (Get-Command python.exe -ErrorAction SilentlyContinue) {
+    & python.exe -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3,12) else 1)' 2>$null
+    if ($LASTEXITCODE -eq 0) { $Python = 'python.exe' }
+}
+if (-not $Python -and (Get-Command py.exe -ErrorAction SilentlyContinue)) {
     $Python = 'py.exe'
     $Prefix = @('-3.12')
-} elseif (Get-Command python.exe -ErrorAction SilentlyContinue) {
-    $Python = 'python.exe'
 }
 if (-not $Python) {
     [Console]::Error.WriteLine('Python 3.12 is required. Ask your Agent to install CPython 3.12 first.')
