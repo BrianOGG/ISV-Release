@@ -1,15 +1,10 @@
 # Agent Skills
 
+支持 **macOS Apple Silicon（ARM64）** 与 **Windows x64**。导入对应 Skill 后，安装入口按平台选择、下载并校验对应的完整运行包，无需手动选择 Runtime。
+
 - [商品信息采集（Product Grabber）](https://github.com/BrianOGG/ISV-Release/releases/download/product-grabber-v1.0.0-dev.3/product-grabber-skill-1.0.0-dev.3.zip)
 - [人群画像（Audience Portrait）](https://github.com/BrianOGG/ISV-Release/releases/download/audience-portrait-v1.0.0-dev.2/audience-portrait-skill-1.0.0-dev.2.zip)
-- [KOL 筛选（固定 Skill v1.0.0）](https://github.com/BrianOGG/ISV-Release/releases/download/skills-fixed-v1.0.0/kol-selection-skill-1.0.0.zip)
-- [E2E（固定 Skill v1.0.0）](https://github.com/BrianOGG/ISV-Release/releases/download/skills-fixed-v1.0.0/e2e-skill-1.0.0.zip)
+- [KOL 筛选（固定 Skill v1.0.1）](https://github.com/BrianOGG/ISV-Release/releases/download/skills-fixed-v1.0.1/kol-selection-skill-1.0.1.zip)
+- [E2E（固定 Skill v1.0.1）](https://github.com/BrianOGG/ISV-Release/releases/download/skills-fixed-v1.0.1/e2e-skill-1.0.1.zip)
 
-## Windows x64 便携测试版
-
-以下测试版已通过 CI 中中文及空格路径下的安装、重复安装、浏览器检查、启动、网页访问和停止验证；真实设备登录和业务任务仍需测试。
-
-- [KOL Windows 测试 Skill ZIP](https://github.com/BrianOGG/ISV-Release/releases/download/kol-selection-portable-win-1.0.0-dev.2/kol-selection-portable-win-skill-1.0.0-dev.2.zip) · [完整环境及校验文件](https://github.com/BrianOGG/ISV-Release/releases/tag/kol-selection-portable-win-1.0.0-dev.2)
-- [E2E Windows 测试 Skill ZIP](https://github.com/BrianOGG/ISV-Release/releases/download/e2e-portable-win-1.0.0-dev.1/e2e-portable-win-skill-1.0.0-dev.1.zip) · [完整环境及校验文件](https://github.com/BrianOGG/ISV-Release/releases/tag/e2e-portable-win-1.0.0-dev.1)
-
-下载解压后按 SKILL.md 安装；首次安装自动下载完整运行时（KOL 约 460 MB，E2E 约 338 MB），已含 Python、依赖及浏览器。
+KOL/E2E 的 Skill 文件与链接固定，后续只发布新的便携 Runtime。首次执行 `install`、后续显式执行 `update` 时获取对应项目、对应平台的最新已发布运行包，并验证 SHA256；日常 `start` 使用本地已安装版本。更新前先停止服务，无需重新导入 Skill。
