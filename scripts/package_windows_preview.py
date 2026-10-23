@@ -69,8 +69,9 @@ def package(project, version, archive, source, output):
         with zipfile.ZipFile(output/zipname, 'w', compression=zipfile.ZIP_DEFLATED) as zip:
             for name, body in entries.items():
                 zip.writestr(name, body)
-    (output/'SHA256SUMS.txt').write_text(''.join(sha(p)+'  '+p.name+'\n'
-         for p in sorted(output.iterdir()) if p.name != 'SHA256SUMS.txt'), encoding='ascii')
+    checksums = ''.join(sha(p)+'  '+p.name+'\n'
+         for p in sorted(output.iterdir()) if p.name != 'SHA256SUMS.txt')
+    (output/'SHA256SUMS.txt').write_bytes(checksums.encode('ascii'))
     print('WINDOWS_PREVIEW_ASSETS_READY', flush=True)
 
 
