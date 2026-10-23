@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: BrianOGG/EC-AI
-          ref: 83da9098d9e18f7fa7af3051c341aea1a159fe13
+          ref: 9ab9b06f6f699d3af302216c68af26600b56ce82
           sparse-checkout: |
             kol-selection/skills/kol-selection
             e2e/skills/e2e
@@ -123,7 +123,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: BrianOGG/EC-AI
-          ref: 83da9098d9e18f7fa7af3051c341aea1a159fe13
+          ref: 9ab9b06f6f699d3af302216c68af26600b56ce82
           sparse-checkout: |
             kol-selection/skills/kol-selection
             e2e/skills/e2e
