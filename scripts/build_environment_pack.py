@@ -32,12 +32,12 @@ def sha(path):
             h.update(block)
     return h.hexdigest()
 
-def sh(*args):
+def sh(*args, stage="PUBLIC_DEPENDENCY_STEP"):
     proc = subprocess.run([str(a) for a in args], stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True, errors="replace", check=False)
     if proc.returncode:
         # Never emit raw pip logs or private environment details in public Actions.
-        raise RuntimeError("PUBLIC_DEPENDENCY_STEP_FAILED")
+        raise RuntimeError(stage+"_FAILED")
     return proc.stdout.strip()
 
 def host_platform():
@@ -97,17 +97,20 @@ def uc_wheel(host_python, original, work, wheels):
     req.write_text("undetected-chromedriver==3.5.5 --hash=sha256:"+match.group(1).decode("ascii")+"\n")
     incoming = work/"source-dist"
     incoming.mkdir()
+    print("ENV_STAGE: verify public UC sdist archive",flush=True)
     sh(host_python, "-m", "pip", "download", "--disable-pip-version-check",
        "--no-deps", "--no-input", "--require-hashes", "--no-binary=:all:",
-       "-r", req, "-d", incoming)
+       "-r", req, "-d", incoming,stage="UC_SDIST_DOWNLOAD")
     sdists = list(incoming.glob("undetected*"))
     if len(sdists)!=1 or sha(sdists[0])!=match.group(1):
         raise RuntimeError("UC_SDIST_HASH_VERIFICATION_FAILED")
+    print("ENV_STAGE: install public UC build tooling",flush=True)
     sh(host_python,"-m","pip","install","--disable-pip-version-check","--no-input",
-       "setuptools==80.9.0","wheel==0.45.1","packaging==25.0")
+       "setuptools==80.9.0","wheel==0.45.1","packaging==25.0",stage="UC_BUILD_TOOL_SETUP")
+    print("ENV_STAGE: build reproducible UC wheel",flush=True)
     sh(host_python, "-m", "pip", "wheel", "--disable-pip-version-check",
        "--no-input", "--no-deps", "--no-build-isolation", "--wheel-dir", wheels,
-       sdists[0])
+       sdists[0],stage="UC_WHEEL_BUILD")
     found=list(wheels.glob("undetected_chromedriver-3.5.5-*.whl"))
     if len(found)!=1:
         raise RuntimeError("UC_PREBUILT_WHEEL_MISSING")
@@ -225,5 +228,7 @@ if __name__ == "__main__":
     args=parser.parse_args()
     try:
         build(args.source,args.python_dir,args.output,args.platform,args.version)
-    except (RuntimeError,OSError,ValueError,subprocess.SubprocessError):
-        raise SystemExit("ENVIRONMENT_BUILD_FAILED: see isolated stage; no private source leaked")
+    except (RuntimeError,OSError,ValueError,subprocess.SubprocessError) as e:
+        import re
+        code=str(e) if type(e) is RuntimeError and re.fullmatch(r"[A-Z_]{5,80}",str(e)) else "ENVIRONMENT_BUILD_FAILED"
+        raise SystemExit("ENVIRONMENT_BUILD_FAILED: "+code)
