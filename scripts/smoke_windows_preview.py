@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -42,7 +43,9 @@ def smoke(project, version, output):
                 '-File', str(skill/'scripts/setup.ps1'), '-Action', action, '-InstallDir', str(install),
                 '-Port', str(port)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
             if result.returncode:
-                raise RuntimeError('FINAL_SKILL_'+action.upper()+'_FAILED')
+                codes = re.findall(rb'\bPORTABLE_[A-Z_]+\b', result.stdout + result.stderr)
+                code = codes[-1].decode('ascii') if codes else 'NO_PUBLIC_CODE'
+                raise RuntimeError('FINAL_SKILL_'+action.upper()+'_FAILED_'+code)
             print('FINAL_SKILL_'+action.upper()+'_OK', flush=True)
         call('prepare')
         call('install')

@@ -62,6 +62,10 @@ def package(project, version, archive, source, output):
         setup = (skill/'scripts/setup-portable.ps1').read_bytes()
         if not setup.startswith(b'\xef\xbb\xbf'):
             raise ValueError('PREVIEW_POWERSHELL_BOM_REQUIRED')
+        marker = b'^([A-Z_]+)='
+        if setup.count(marker) != 1:
+            raise ValueError('PREVIEW_SETUP_PARSER_CONTRACT_CHANGED')
+        setup = setup.replace(marker, b'^([A-Z][A-Z0-9_]*)=')
         entries = {'SKILL.md': text.encode('utf-8'), 'scripts/setup.ps1': setup,
                    'scripts/ecai_launcher.py': launcher.read_bytes(),
                    'assets/portable-windows-x64.conf': config.encode('ascii')}
