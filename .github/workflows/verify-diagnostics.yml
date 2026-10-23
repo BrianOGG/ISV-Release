@@ -18,6 +18,16 @@ on:
       - scripts/check_nuitka_source.py
       - scripts/verify_runtime_archive.py
       - scripts/test_native_release_safety.py
+      - scripts/module_archive.py
+      - scripts/module_installer.py
+      - scripts/module_launcher.py
+      - scripts/bootstrap_module.sh
+      - scripts/bootstrap_module.ps1
+      - scripts/assemble_modules.py
+      - scripts/package_module_artifact.py
+      - scripts/smoke_module_runtime.py
+      - scripts/test_module_release.py
+      - scripts/test_module_skill_install.ps1
       - .github/workflows/verify-diagnostics.yml
   workflow_dispatch:
 
@@ -34,6 +44,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_diagnostics_assembly.py' -v
           python3 -m unittest discover -s scripts -p 'test_source_input_fingerprint.py' -v
           python3 -m unittest discover -s scripts -p 'test_native_release_safety.py' -v
+          python3 -m unittest discover -s scripts -p 'test_module_release.py' -v
 
   macos-export:
     runs-on: macos-14
