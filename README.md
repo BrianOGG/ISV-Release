@@ -2,7 +2,18 @@
 
 提供以下工具的 Agent Skill 安装包，支持 **macOS（Apple Silicon）** 和 **Windows（x64）**。
 
-## 工具列表
+## KOL / E2E Mac 测试版下载
+
+以下两个便携测试版仅支持 **macOS Apple Silicon（ARM64）**。已通过 CI 的核心导入、浏览器检查、服务启动、状态、首页访问和停止检查；实际设备安装、登录及业务任务仍需测试。Windows 版本正在排查启动问题。
+
+| 项目 | Mac 测试版本 | 下载 |
+| --- | --- | --- |
+| KOL Selection | `1.0.0-dev.2` | [下载 Mac Skill ZIP](https://github.com/BrianOGG/ISV-Release/releases/download/kol-selection-portable-mac-1.0.0-dev.2/kol-selection-portable-mac-skill-1.0.0-dev.2.zip) · [完整运行时与校验文件](https://github.com/BrianOGG/ISV-Release/releases/tag/kol-selection-portable-mac-1.0.0-dev.2) |
+| E2E | `1.0.0-dev.1` | [下载 Mac Skill ZIP](https://github.com/BrianOGG/ISV-Release/releases/download/e2e-portable-mac-1.0.0-dev.1/e2e-portable-mac-skill-1.0.0-dev.1.zip) · [完整运行时与校验文件](https://github.com/BrianOGG/ISV-Release/releases/tag/e2e-portable-mac-1.0.0-dev.1) |
+
+下载并解压对应的 **Mac Skill ZIP**，按其中的 SKILL.md 导入客户端或执行安装。首次安装需要联网下载完整运行时（KOL 约 377 MB，E2E 约 272 MB）；已包含 Python、公开依赖和浏览器，无需在 Mac 上自行安装 Python 或运行 pip。请使用上面的 Mac 便携版入口测试；下面的通用版本目录保留历史分发入口。
+
+## 通用版本目录
 
 <!-- RELEASES:START -->
 | 工具 | 功能 | 最新版本 | 下载 |
