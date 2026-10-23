@@ -15,6 +15,9 @@ on:
       - scripts/source_input_fingerprint.py
       - scripts/test_source_input_fingerprint.py
       - scripts/smoke_e2e_runtime.py
+      - scripts/check_nuitka_source.py
+      - scripts/verify_runtime_archive.py
+      - scripts/test_native_release_safety.py
       - .github/workflows/verify-diagnostics.yml
   workflow_dispatch:
 
@@ -30,6 +33,7 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p 'test_diagnostics_assembly.py' -v
           python3 -m unittest discover -s scripts -p 'test_source_input_fingerprint.py' -v
+          python3 -m unittest discover -s scripts -p 'test_native_release_safety.py' -v
 
   macos-export:
     runs-on: macos-14
