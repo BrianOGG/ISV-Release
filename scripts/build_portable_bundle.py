@@ -235,6 +235,13 @@ def build(project,platform_name,version,source,core,managed,output):
             probe.bind(("127.0.0.1",0))
             checked_port=probe.getsockname()[1]
         cmd=[venv_python,"-I",stage/"ecai_launcher.py","--release",release]
+        if sys.platform == "win32" and os.environ.get("ECAI_WINDOWS_IDENTITY_EXPERIMENT") == "1":
+            from probe_windows_venv import probe as identity_probe
+            from patch_windows_launcher import patch as patch_public_launcher
+            identity_probe(venv_python, stage/"ecai_launcher.py", release, stage, project, env)
+            patch_public_launcher(stage/"ecai_launcher.py")
+            task("ADAPTED_CORE_VERSION",cmd+["version"],env=env,timeout=45)
+            task("ADAPTED_CORE_DOCTOR",cmd+["doctor"],env=env,timeout=60)
         started=False
         try:
             try:
@@ -293,3 +300,4 @@ if __name__=="__main__":
               getattr(a,"managed_python"),a.output)
     except (OSError,RuntimeError,ValueError,KeyError,zipfile.BadZipFile,tarfile.TarError):
         raise SystemExit("PORTABLE_BUILD_FAILED: see last PORTABLE_STAGE label")
+

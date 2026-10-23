@@ -1,0 +1,104 @@
+# Native Core is reused from RC; only public Python, wheels and browsers assembled. Child process startup diagnostics added. Native load gate now emits safe diagnostic codes. Embedded VERSION failures are isolated with a direct CLI classification.
+name: Diagnose Windows venv identity and verify public launcher adapter
+on:
+  push:
+    branches: [codex/windows-start-diagnostics]
+    paths:
+      - .github/workflows/windows-start-diagnostics.yml
+      - scripts/patch_windows_launcher.py
+      - scripts/probe_windows_venv.py
+      - scripts/build_portable_bundle.py
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ecai-windows-start-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: kol-selection
+            version: 1.0.0-dev.2
+            platform: windows-x64
+            runner: windows-2022
+          - project: e2e
+            version: 1.0.0-dev.1
+            platform: windows-x64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: e9dee54b4befc0609088f2b3f4fd9a685b91b086
+          sparse-checkout: |
+            kol-selection/skills/kol-selection
+            e2e/skills/e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: 'latest'
+          enable-cache: false
+      - name: Download and verify existing native Core (NO NUITKA)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p native
+          gh release download "$PROJECT-v$VERSION" \
+            -R "$GITHUB_REPOSITORY" \
+            -p "$PROJECT-core-$PLATFORM-$VERSION.zip" \
+            -D native
+          python builder/scripts/core_handoff_archive.py \
+            --project "$PROJECT" --platform "$PLATFORM" --version "$VERSION" \
+            --zip "native/$PROJECT-core-$PLATFORM-$VERSION.zip"
+      - name: Acquire prebuilt portable CPython 3.12.10
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/portable-python
+        run: |
+          set -euo pipefail
+          uv python install 3.12.10
+          test -d "$UV_PYTHON_INSTALL_DIR"
+      - name: Preinstall ALL dependencies, bundle browser, test actual Core then compress
+        shell: bash
+        env:
+          PROJECT: ${{ matrix.project }}
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ matrix.version }}
+          ECAI_WINDOWS_IDENTITY_EXPERIMENT: '1'
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s builder/scripts -p test_windows_launcher_adapter.py -v
+          mkdir -p "$RUNNER_TEMP/out"
+          python builder/scripts/build_portable_bundle.py \
+            --project "$PROJECT" --platform "$PLATFORM" --version "$VERSION" \
+            --source source \
+            --core "native/$PROJECT-core-$PLATFORM-$VERSION.zip" \
+            --managed-python "$RUNNER_TEMP/portable-python" \
+            --output "$RUNNER_TEMP/out/$PROJECT-portable-$PLATFORM-$VERSION.tar.gz"
+      - name: Upload ONLY verified portable runtime, never private source
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.project }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/out/*.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 5
