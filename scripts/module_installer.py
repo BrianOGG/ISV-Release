@@ -122,8 +122,8 @@ def ensure_environment(project, lock_path):
         subprocess.run([sys.executable, "-m", "venv", str(staging)], check=True)
         stage_python = python_in(staging)
         subprocess.run([str(stage_python), "-m", "pip", "install", "--no-input",
-                        "--disable-pip-version-check", "--require-hashes", "-r",
-                        str(lock_path)], check=True)
+                        "--disable-pip-version-check", "--only-binary=:all:",
+                        "--require-hashes", "-r", str(lock_path)], check=True)
         (staging / ".ready-lock-sha256").write_text(lock_sha + "\n", encoding="ascii")
         if target.exists():
             shutil.rmtree(target)
