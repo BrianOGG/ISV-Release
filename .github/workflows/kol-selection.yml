@@ -257,3 +257,33 @@ jobs:
           $version = '${{ needs.prepare.outputs.version }}'
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder/scripts/test_kol_skill_install.ps1 -SkillZip "release-bundle/kol-selection-skill-$version.zip" -RuntimeZip "release-bundle/kol-selection-runtime-windows-x64-$version.zip"
           if ($LASTEXITCODE -ne 0) { throw 'Final KOL Skill installation test failed' }
+
+  publish:
+    needs: [prepare, assemble, verify-final-skill]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: kol-release-bundle
+          path: dist/release
+      - name: Publish immutable Dev Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.prepare.outputs.source_tree }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Refusing to overwrite immutable release $TAG"
+            exit 1
+          fi
+          notes="$(printf 'KOL Selection %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nmacOS ARM64 and Windows x64 packages. Download the Skill ZIP and run install before start. Browser components are prepared during installation.\n' "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
+          options=()
+          if [ "$PRERELEASE" = 'true' ]; then options+=(--prerelease); fi
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+            --target main --title "KOL Selection $VERSION" \
+            "${options[@]}" --notes "$notes" dist/release/*
