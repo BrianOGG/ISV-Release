@@ -1,4 +1,4 @@
-# Reuses native Core ZIP artifacts from already-successful KOL/E2E build jobs.
+# Reuses native Core ZIP artifacts from already-successful KOL/E2E build jobs. LF/CRLF-only lock hash normalization verified.
 # This is a one-shot recovery after an assembler contract mismatch. No Nuitka.
 name: Resume verified E2E and KOL Core release
 on:
