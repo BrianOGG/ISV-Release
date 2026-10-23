@@ -20,7 +20,6 @@ jobs:
       matrix:
         include:
           - {project: kol-selection, version: 1.0.0-dev.2}
-          - {project: e2e, version: 1.0.0-dev.1}
     defaults:
       run:
         shell: bash

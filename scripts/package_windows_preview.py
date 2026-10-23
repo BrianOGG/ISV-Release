@@ -37,6 +37,15 @@ def package(project, version, archive, source, output):
             path = stage/name
             if path.exists():
                 shutil.rmtree(path)
+        # Keep nested driver executables within Win32's process launch path
+        # limit, including user-selected install roots with Unicode/spaces.
+        original_python = stage/meta['python_executable']
+        if (original_python.parent.parent != stage/'python'
+                or not original_python.is_file()):
+            raise ValueError('PREVIEW_PYTHON_LAYOUT_UNEXPECTED')
+        short_python = stage/'python'/'rt'
+        original_python.parent.rename(short_python)
+        meta['python_executable'] = 'python/rt/'+original_python.name
         launcher = stage/'ecai_launcher.py'
         shutil.copyfile(skill/'scripts/ecai_launcher.py', launcher)
         patch(launcher)

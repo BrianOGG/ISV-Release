@@ -43,6 +43,22 @@ def smoke(project, version, output):
                 '-File', str(skill/'scripts/setup.ps1'), '-Action', action, '-InstallDir', str(install),
                 '-Port', str(port)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
             if result.returncode:
+                if action == 'install' and project == 'kol-selection':
+                    installed_python = cache/h/conf['PORTABLE_PYTHON']
+                    node = next((cache/h/'python').rglob('node.exe'), None)
+                    print('FINAL_BROWSER_NODE_EXISTS='+str(bool(node and node.is_file())).lower(), flush=True)
+                    print('FINAL_BROWSER_NODE_PATH_OVER_260='+str(bool(node and len(str(node))>=260)).lower(), flush=True)
+                    print('FINAL_BROWSER_CHROME_COUNT='+str(len(list((cache/h/'browsers').rglob('chrome.exe')))), flush=True)
+                    diag = root/'app-data/logs/diagnostics.jsonl'
+                    if diag.is_file():
+                        for row in diag.read_text(encoding='utf-8').splitlines()[-3:]:
+                            item = json.loads(row)
+                            kind = item.get('error_type', '')
+                            if re.fullmatch('[A-Za-z_]+', kind):
+                                print('FINAL_BROWSER_ERROR_TYPE='+kind, flush=True)
+                            number = item.get('winerror')
+                            if isinstance(number, int):
+                                print('FINAL_BROWSER_WINERROR='+str(number), flush=True)
                 codes = re.findall(rb'\bPORTABLE_[A-Z_]+\b', result.stdout + result.stderr)
                 code = codes[-1].decode('ascii') if codes else 'NO_PUBLIC_CODE'
                 raise RuntimeError('FINAL_SKILL_'+action.upper()+'_FAILED_'+code)
