@@ -1,4 +1,4 @@
-# Independent public environment layer for compiled KOL + E2E Core.
+# Independent public environment layer for compiled KOL + E2E Core. Initial environment bundle run.
 # Produces CPython 3.12.10 and platform-specific, offline-verifiable wheels.
 # Does NOT compile private business code, modify existing releases, or deploy a Skill.
 name: Build common CPython and offline dependencies
