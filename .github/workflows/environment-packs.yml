@@ -1,4 +1,4 @@
-# Independent public environment layer for compiled KOL + E2E Core. Diagnose pinned public UC wheel preparation.
+# Independent public environment layer for compiled KOL + E2E Core. Pinned UC sdist byte-hash fix.
 # Produces CPython 3.12.10 and platform-specific, offline-verifiable wheels.
 # Does NOT compile private business code, modify existing releases, or deploy a Skill.
 name: Build common CPython and offline dependencies
