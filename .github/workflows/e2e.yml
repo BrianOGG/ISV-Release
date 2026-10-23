@@ -98,6 +98,9 @@ jobs:
           assert Path("skills/e2e/scripts/ecai_launcher.py").is_file()
           print("Private-source v2 packaging contract passed")
           PY
+      - name: Prepare cross-platform fixture temp root
+        shell: bash
+        run: sudo install -d -m 1777 /private/tmp
       - name: Run relevant source-side offline regressions
         working-directory: source/e2e
         shell: bash
