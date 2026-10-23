@@ -36,7 +36,7 @@ def verified_core_with_canonical_lock(source, destination, project, platform, ve
         shutil.copyfile(source, destination)
         return meta
     # Git on Windows can autocrlf checkout the Git-committed LF requirement lock.
-    crlf = raw.replace(b"\\r\\n", b"\\n").replace(b"\\n", b"\\r\\n")
+    crlf = raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     crlf_sha = hashlib.sha256(crlf).hexdigest()
     if platform != "windows-x64" or meta["lock_sha256"] != crlf_sha:
         raise ValueError("CORE_RUNTIME_LOCK_MISMATCH")
@@ -48,7 +48,7 @@ def verified_core_with_canonical_lock(source, destination, project, platform, ve
                 continue
             body = incoming.read(item.filename)
             if item.filename == "core-build.json":
-                body = (json.dumps(meta, ensure_ascii=False, indent=2) + "\\n").encode("utf-8")
+                body = (json.dumps(meta, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
             outgoing.writestr(item, body)
     rewritten = core_metadata(destination, project, platform, version)
     if rewritten["lock_sha256"] != canonical:
