@@ -190,10 +190,16 @@ def build(project,platform_name,version,source,core,managed,output):
             env["PLAYWRIGHT_BROWSERS_PATH"]=str(stage/"browsers")
         else:
             env["E2E_CHROME_PATH"]=str(stage/browser_path)
-        task("NATIVE_CORE_VERSION",[exe,"-I",stage/"ecai_launcher.py",
+        task("CREATE_NO_PIP_VENV",[exe,"-I","-m","venv","--without-pip",
+                                     "--system-site-packages",stage/"venv"],env=env,timeout=60)
+        venv_python=stage/"venv"/("Scripts/python.exe" if sys.platform=="win32" else "bin/python")
+        task("NATIVE_CORE_VERSION",[venv_python,"-I",stage/"ecai_launcher.py",
                                    "--release",release,"version"],env=env,timeout=45)
-        task("NATIVE_CORE_DOCTOR",[exe,"-I",stage/"ecai_launcher.py",
+        task("NATIVE_CORE_DOCTOR",[venv_python,"-I",stage/"ecai_launcher.py",
                                   "--release",release,"doctor"],env=env,timeout=60)
+        # pyvenv.cfg contains absolute host paths, so do not distribute this
+        # staging venv. The Skill creates it locally in milliseconds without pip.
+        shutil.rmtree(stage/"venv")
         print("PORTABLE_STAGE: ARCHIVE_PREINSTALLED_RUNTIME",flush=True)
         with tarfile.open(output,"w:gz",compresslevel=3) as tar:
             tar.add(stage,arcname=".",recursive=True)
