@@ -1,0 +1,140 @@
+# Reuses native Core ZIP artifacts from already-successful KOL/E2E build jobs.
+# This is a one-shot recovery after an assembler contract mismatch. No Nuitka.
+name: Resume verified E2E and KOL Core release
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/resume-handoff.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isv-resume-handoff
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    if: contains(github.event.head_commit.message, '[resume-core]')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: kol-selection, version: '1.0.0-dev.2', run_id: 39925538068 }
+          - { project: e2e, version: '1.0.0-dev.1', run_id: 39925544926 }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: 175539044e02735b353af1b78143018507316d5a
+          sparse-checkout: ${{ matrix.project }}/skills/${{ matrix.project }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.project }}-core-macos-arm64
+          run-id: ${{ matrix.run_id }}
+          github-token: ${{ github.token }}
+          path: native/mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.project }}-core-windows-x64
+          run-id: ${{ matrix.run_id }}
+          github-token: ${{ github.token }}
+          path: native/win
+      - name: Reassemble verified native Core WITHOUT recompilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/scripts/assemble_handoff.py \
+            --project '${{ matrix.project }}' --version '${{ matrix.version }}' \
+            --tag '${{ matrix.project }}-v${{ matrix.version }}' \
+            --source source \
+            --mac native/mac/native-core.zip --win native/win/native-core.zip \
+            --output dist/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.project }}-resumed-release
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 3
+
+  verify:
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: kol-selection, platform: macos-arm64, runner: macos-14, version: '1.0.0-dev.2' }
+          - { project: kol-selection, platform: windows-x64, runner: windows-2022, version: '1.0.0-dev.2' }
+          - { project: e2e, platform: macos-arm64, runner: macos-14, version: '1.0.0-dev.1' }
+          - { project: e2e, platform: windows-x64, runner: windows-2022, version: '1.0.0-dev.1' }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: 175539044e02735b353af1b78143018507316d5a
+          sparse-checkout: ${{ matrix.project }}
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.project }}-resumed-release
+          path: artifacts
+      - name: Verify real native imports, Skill installation, worker, demo and lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python builder/scripts/smoke_handoff.py \
+            --project '${{ matrix.project }}' \
+            --source 'source/${{ matrix.project }}' \
+            --skill 'artifacts/${{ matrix.project }}-skill-${{ matrix.version }}.zip' \
+            --core 'artifacts/${{ matrix.project }}-core-${{ matrix.platform }}-${{ matrix.version }}.zip'
+
+  publish:
+    needs: [assemble, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: kol-selection, version: '1.0.0-dev.2' }
+          - { project: e2e, version: '1.0.0-dev.1' }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.project }}-resumed-release
+          path: dist/release
+      - name: Publish immutable release only if both platform validations pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$PROJECT-v$VERSION"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Refuse overwrite existing release"
+            exit 1
+          fi
+          notes="$(printf 'Native CPython 3.12 compiled Core: %s %s\n\nSource-Commit: 175539044e02735b353af1b78143018507316d5a\n\nResumed previously verified Windows and macOS native artifacts without recompilation. Skill installed and tested on both systems. Public Runtime archives exclude private source.\n' "$PROJECT" "$VERSION")"
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+            --target main --title "$PROJECT $VERSION" --prerelease \
+            --notes "$notes" dist/release/*
