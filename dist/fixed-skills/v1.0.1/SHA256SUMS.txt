@@ -1,2 +1,2 @@
-c6f63a3ff472291837dbb17d06b0e9d8c1aa20c52ced2748a89befbfa69ca82f  e2e-skill-1.0.1.zip
-cfdff0222d5602b8abf862e7f2971a87a925a05ff93c827a70aa23cecb7005e6  kol-selection-skill-1.0.1.zip
+905c6696f9ec365f857516c13eed82fd8c0eac59b7fc2bd05ea2d5be0297b800  e2e-skill-1.0.1.zip
+ab07ec6e812c6701ad78e73f59120ca9d4c5e80a4eab6b26f03e224d00bbfdcf  kol-selection-skill-1.0.1.zip
