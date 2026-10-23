@@ -11,6 +11,10 @@ on:
       - scripts/assemble_lite.py
       - scripts/test_diagnostics_assembly.py
       - scripts/test_kol_skill_install.ps1
+      - scripts/test_e2e_skill_install.ps1
+      - scripts/source_input_fingerprint.py
+      - scripts/test_source_input_fingerprint.py
+      - scripts/smoke_e2e_runtime.py
       - .github/workflows/verify-diagnostics.yml
   workflow_dispatch:
 
