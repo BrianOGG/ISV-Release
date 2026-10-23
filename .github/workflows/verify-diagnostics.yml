@@ -10,6 +10,7 @@ on:
       - scripts/bootstrap.ps1
       - scripts/assemble_lite.py
       - scripts/test_diagnostics_assembly.py
+      - scripts/test_kol_skill_install.ps1
       - .github/workflows/verify-diagnostics.yml
   workflow_dispatch:
 
@@ -120,3 +121,16 @@ jobs:
           if ($Proc.ExitCode -eq 0) { throw 'bootstrap unexpectedly passed' }
           $Log = Get-Content -LiteralPath (Join-Path $Boot 'bootstrap.jsonl') -Tail 1 -Encoding UTF8 | ConvertFrom-Json
           if ($Log.stage -ne 'download' -or $Log.code -ne 'runtime_download_failed') { throw 'failure was not journaled safely' }
+
+  windows-kol-script:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse packaged Skill smoke script with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $Content = Get-Content -LiteralPath scripts/test_kol_skill_install.ps1 -Raw -Encoding UTF8
+          $Tokens = $null
+          $Errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseInput($Content, [ref]$Tokens, [ref]$Errors)
+          if ($Errors.Count -ne 0) { throw 'Invalid Windows PowerShell 5.1 package smoke syntax' }
