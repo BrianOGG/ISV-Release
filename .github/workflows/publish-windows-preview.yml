@@ -107,7 +107,7 @@ jobs:
             echo '::error::Refuse to overwrite existing preview assets'
             exit 1
           fi
-          gh release create "$tag" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+          gh release create "$tag" -R "$GITHUB_REPOSITORY" --target main --prerelease \
             --title "$PROJECT $VERSION portable Windows test candidate" \
-            --notes 'Windows x64 TEST candidate. Includes CPython 3.12.10, public dependencies, browser and private compiled Core. Fixes the Windows venv PID readiness failure in the public launcher. CI verified the final Skill through PowerShell: cached-runtime install/reinstall, version, doctor, start, status, web UI and stop in a relocated path containing spaces and Chinese characters. No system Python or pip needed. Live network asset download, real-device install, platform login and business tasks still require hands-on testing.' \
+            --notes "Builder commit: $GITHUB_SHA. Windows x64 TEST candidate. Includes CPython 3.12.10, public dependencies, browser and private compiled Core. Fixes the Windows venv PID readiness failure in the public launcher. CI verified the final Skill through PowerShell: cached-runtime install/reinstall, version, doctor, start, status, web UI and stop in a relocated path containing spaces and Chinese characters. No system Python or pip needed. Live network asset download, real-device install, platform login and business tasks still require hands-on testing." \
             ./*
