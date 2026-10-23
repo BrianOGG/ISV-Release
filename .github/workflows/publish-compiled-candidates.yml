@@ -1,0 +1,143 @@
+# One-time candidate publication from native Core artifacts already compiled successfully.
+# This deliberately does NOT recompile, install dependencies, or claim installation passed.
+name: Publish KOL and E2E compiled test candidates
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-compiled-candidates.yml
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-compiled-candidates
+  cancel-in-progress: false
+
+jobs:
+  publish-candidates:
+    if: contains(github.event.head_commit.message, '[publish-rc]')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: kol-selection
+            version: 1.0.0-dev.2
+            artifact: kol-selection-resumed-release
+            title: KOL Selection 1.0.0-dev.2 - test candidate
+          - project: e2e
+            version: 1.0.0-dev.1
+            artifact: e2e-resumed-release
+            title: E2E 1.0.0-dev.1 - test candidate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          run-id: 39927898867
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Verify exact candidate asset hashes, Core privacy and Skill download links
+        shell: bash
+        env:
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 4
+          sha256sum --check SHA256SUMS.txt
+          for platform in macos-arm64 windows-x64; do
+            python3 ../scripts/core_handoff_archive.py \
+              --project "$PROJECT" --platform "$platform" --version "$VERSION" \
+              --zip "$PROJECT-core-$platform-$VERSION.zip"
+          done
+          python3 - <<'PY'
+          import hashlib, json, os, zipfile
+          from pathlib import Path
+          project=os.environ["PROJECT"]; version=os.environ["VERSION"]
+          tag=project+"-v"+version
+          skill=Path(project+"-skill-"+version+".zip")
+          expected={
+              "SKILL.md", "scripts/ecai_launcher.py", "scripts/ecai_install.py",
+              "scripts/setup.sh", "scripts/setup.ps1",
+              "assets/release.json",
+              "assets/requirements-runtime-macos-arm64.txt",
+              "assets/requirements-runtime-windows-x64.txt",
+              "assets/requirements-bootstrap-macos-arm64.txt",
+              "assets/requirements-bootstrap-windows-x64.txt"
+          }
+          with zipfile.ZipFile(skill) as f:
+              if set(f.namelist()) != expected:
+                  raise SystemExit("Candidate Skill has unexpected payload")
+              if not f.read("scripts/setup.ps1").startswith(b"\xef\xbb\xbf"):
+                  raise SystemExit("PowerShell UTF-8 BOM missing")
+              manifest=json.loads(f.read("assets/release.json"))
+              if manifest.get("schema_version")!=2 or manifest.get("project")!=project or manifest.get("skill_version")!=version:
+                  raise SystemExit("Candidate Skill version contract mismatch")
+              for platform in ("macos-arm64","windows-x64"):
+                  filename=f"{project}-core-{platform}-{version}.zip"
+                  target=Path(filename)
+                  descriptor=manifest["platforms"][platform]
+                  expected_url=f"https://github.com/BrianOGG/ISV-Release/releases/download/{tag}/{filename}"
+                  if descriptor.get("url")!=expected_url:
+                      raise SystemExit("Core artifact URL tag mismatch")
+                  if descriptor.get("sha256")!=hashlib.sha256(target.read_bytes()).hexdigest():
+                      raise SystemExit("Core artifact URL hash mismatch")
+                  if descriptor.get("lock_sha256")!=hashlib.sha256(
+                      f.read(f"assets/requirements-runtime-{platform}.txt")).hexdigest():
+                      raise SystemExit("Pinned dependencies hash mismatch")
+                  if descriptor.get("bootstrap_sha256")!=hashlib.sha256(
+                      f.read(f"assets/requirements-bootstrap-{platform}.txt")).hexdigest():
+                      raise SystemExit("Bootstrap dependencies hash mismatch")
+          print("Candidate package safe for test publication; native compilation already completed.")
+          PY
+      - name: Publish unverified-installer pre-release without touching approved projects
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+          TITLE: ${{ matrix.title }}
+        run: |
+          set -euo pipefail
+          tag="$PROJECT-v$VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Refuse overwrite existing release $tag"
+            exit 1
+          fi
+          notes="$(cat <<EOF
+          TEST CANDIDATE ONLY — NOT YET VERIFIED ON END-USER DEVICES.
+
+          Target: $PROJECT $VERSION, CPython 3.12, macOS ARM64 and Windows x64.
+
+          Passed: private business modules compiled natively on both platforms;
+          private-source / native ZIP integrity checks and Skill assembly passed.
+          Not passed: fresh Skill install / environment setup smoke tests on
+          GitHub-hosted runners. In particular INSTALL_STEP_FAILED was reported;
+          the exact failing install substep remains unconfirmed.
+
+          This is published expressly for hands-on testing. It is NOT a stable,
+          production-approved release. Do not enter business credentials before
+          the local environment and startup checks pass.
+
+          Installation: download the matching Skill ZIP and follow SKILL.md.
+          The Skill creates a Python 3.12 environment and installs public third-party
+          packages. Playwright's browser or Google Chrome may also be required.
+          The four published files include both native Cores, the lightweight
+          Skill, and SHA256SUMS.txt. No EC-AI private Python source is published.
+
+          Original successful native Core build jobs:
+          KOL: https://github.com/BrianOGG/ISV-Release/actions/runs/39925538068
+          E2E: https://github.com/BrianOGG/ISV-Release/actions/runs/39925544926
+          EOF
+          )"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+            --target main --title "$TITLE" --prerelease \
+            --notes "$notes" candidate/*
+          echo "### Published test candidate: $tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
