@@ -27,7 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Verify synthetic Skill packaging contracts
-        run: python3 -m unittest discover -s scripts -p 'test_diagnostics_assembly.py' -v
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_diagnostics_assembly.py' -v
           python3 -m unittest discover -s scripts -p 'test_source_input_fingerprint.py' -v
 
   macos-export:
