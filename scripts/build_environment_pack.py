@@ -194,7 +194,7 @@ def build(source, managed, target, platform_name, bundle_version):
             if project=="e2e":
                 # The wheel is already in wheels/; avoid pip downloading UC's sdist.
                 raw=effective
-                without=re.sub(r"(?m)^undetected-chromedriver==3\.5\.5[^\n]*\n","",raw)
+                without=re.sub(rb"(?m)^undetected-chromedriver==3\.5\.5[^\n]*\n",b"",raw)
                 remainder.write_bytes(without)
                 pip_download(sys.executable,remainder,wheels)
             else:
