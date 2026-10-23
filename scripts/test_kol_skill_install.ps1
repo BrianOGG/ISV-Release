@@ -60,7 +60,8 @@ try {
     $Bundled = Join-Path $SkillRoot 'scripts/setup-bundled.ps1'
     $CacheCopy = Join-Path $TestRoot 'cached-setup.ps1'
     Copy-Item -LiteralPath $Bundled -Destination $CacheCopy
-    if ([IO.File]::ReadAllBytes($CacheCopy)[0] -ne 239) {
+    [byte[]]$CachedScriptBytes = [IO.File]::ReadAllBytes($CacheCopy)
+    if ($CachedScriptBytes.Length -lt 3 -or $CachedScriptBytes[0] -ne 239 -or $CachedScriptBytes[1] -ne 187 -or $CachedScriptBytes[2] -ne 191) {
         throw 'PowerShell BOM was not preserved in the simulated installer cache'
     }
 
