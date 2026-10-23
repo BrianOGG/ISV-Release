@@ -146,6 +146,7 @@ def build(source, managed, target, platform_name, bundle_version):
     if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z_.-]{0,99}",bundle_version):
         raise RuntimeError("INVALID_ENV_VERSION")
     source, managed, target = Path(source), Path(managed), Path(target)
+    print("ENV_STAGE: verify managed Python 3.12.10",flush=True)
     python = portable_python(managed)
     target.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="ecai-env-pack-") as temp:
@@ -153,6 +154,7 @@ def build(source, managed, target, platform_name, bundle_version):
         stage=work/"payload"
         stage.mkdir()
         python_root=stage/"python"
+        print("ENV_STAGE: stage portable Python",flush=True)
         shutil.copytree(managed,python_root,symlinks=True)
         rel_python=python.relative_to(managed)
         relocated=python_root/rel_python
@@ -164,6 +166,7 @@ def build(source, managed, target, platform_name, bundle_version):
                  "projects":{},"build_tools":{"uc_sdist_wheel_built_in_ci":True},
                  "install_instruction":"Extract using tar preserving symlinks; create project-specific venv and install wheels offline"}
         for project in PROJECTS:
+            print("ENV_STAGE: collect public wheel hashes for "+project,flush=True)
             project_root=stage/"projects"/project
             wheels=project_root/"wheels"
             wheels.mkdir(parents=True)
@@ -174,6 +177,7 @@ def build(source, managed, target, platform_name, bundle_version):
                 # Only this public dependency has an sdist instead of wheels.
                 isolated=work/"uc-build"
                 isolated.mkdir()
+                print("ENV_STAGE: build hash-pinned public UC wheel",flush=True)
                 built=uc_wheel(sys.executable,original,isolated,wheels)
                 effective=update_uc_lock(original,sha(built))
             (project_root/"requirements-bootstrap.txt").write_bytes(bootstrap)
@@ -190,6 +194,7 @@ def build(source, managed, target, platform_name, bundle_version):
                 pip_download(sys.executable,remainder,wheels)
             else:
                 pip_download(sys.executable,project_root/"requirements-runtime.txt",wheels)
+            print("ENV_STAGE: offline venv install/verify "+project,flush=True)
             with tempfile.TemporaryDirectory(prefix="offline-",dir=work) as vt:
                 test_offline(relocated,project_root,Path(vt))
             payload["projects"][project]={
@@ -200,6 +205,7 @@ def build(source, managed, target, platform_name, bundle_version):
                 "offline_install_verified":True}
         (stage/"environment.json").write_text(json.dumps(payload,indent=2)+"\n",encoding="utf-8")
         # tar, not ZIP: macOS managed CPython contains real symlinks.
+        print("ENV_STAGE: compress full environment",flush=True)
         with tarfile.open(target,"w:gz",compresslevel=3) as archive:
             archive.add(stage,arcname=".",recursive=True)
     print(json.dumps({"platform":platform_name,"python":PYTHON_VERSION,
