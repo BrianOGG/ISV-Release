@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -23,18 +24,38 @@ def free_port():
         return probe.getsockname()[1]
 
 
+SAFE_DIAGNOSTIC_FACTS = frozenset({
+    "executable_exists",
+    "executable_permission_ok",
+    "working_directory_exists",
+})
+
+
 def safe_errors(data_dir):
-    """Print only known-safe diagnosis metadata, never raw service stderr."""
+    """Print only allowlisted diagnosis metadata, never raw service stderr."""
     path = data_dir / "logs" / "diagnostics.jsonl"
     if not path.is_file():
         return
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-5:]:
         try:
             record = json.loads(line)
-            print("Safe diagnostic:", {
-                "stage": record.get("stage"),
-                "error_type": record.get("error_type"),
-            }, file=sys.stderr)
+            safe_record = {}
+            for key in ("stage", "error_type"):
+                value = record.get(key)
+                if isinstance(value, str) and re.fullmatch(
+                    r"[A-Za-z][A-Za-z0-9_.-]{0,63}", value
+                ):
+                    safe_record[key] = value
+            error_code = record.get("error_code")
+            if type(error_code) is int:
+                safe_record["error_code"] = error_code
+            facts = record.get("facts")
+            if isinstance(facts, dict):
+                safe_record["facts"] = {
+                    key: value for key, value in facts.items()
+                    if key in SAFE_DIAGNOSTIC_FACTS and type(value) is bool
+                }
+            print("Safe diagnostic:", safe_record, file=sys.stderr)
         except (ValueError, TypeError, AttributeError):
             pass
 
