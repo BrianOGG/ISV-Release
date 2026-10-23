@@ -21,7 +21,12 @@ def run(argv,env,label,timeout=900, expect=0):
     except Exception:
         raise AssertionError("SMOKE_"+label+"_LAUNCH_FAILED") from None
     if result.returncode!=expect:
-        raise AssertionError("SMOKE_"+label+"_EXIT_"+str(result.returncode))
+        # The EC-AI installer exposes only fixed ALL_CAPS error codes.
+        # Do not leak raw stderr, pip URLs, local paths or exception strings.
+        import re
+        codes = re.findall(r"[（(]([A-Z_]{4,80})[）)]",result.stdout+"\n"+result.stderr)
+        safe = ("_"+codes[-1]) if codes else "_NO_PUBLIC_CODE"
+        raise AssertionError("SMOKE_"+label+"_EXIT_"+str(result.returncode)+safe)
     return result.stdout
 
 def freeport():
