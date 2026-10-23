@@ -145,11 +145,18 @@ jobs:
           ECAI_NUITKA_JOBS: ${{ matrix.platform == 'windows-x64' && '1' || '2' }}
           ECAI_NUITKA_LOW_MEMORY: ${{ matrix.platform == 'windows-x64' && '1' || '0' }}
         run: |
+          set -euo pipefail
+          started="$(date +%s)"
+          result=0
           if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
-            bash scripts/build_macos_arm64.sh
+            bash scripts/build_macos_arm64.sh || result=$?
           else
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows_x64.ps1
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows_x64.ps1 || result=$?
           fi
+          elapsed=$(( $(date +%s) - started ))
+          if [ "$result" -eq 0 ]; then state=passed; else state=failed; fi
+          printf '| E2E | %s | %ss | %s |\\n' '${{ matrix.platform }}' "$elapsed" "$state" >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
       - name: Archive macOS runtime
         if: matrix.platform == 'macos-arm64'
         run: |
