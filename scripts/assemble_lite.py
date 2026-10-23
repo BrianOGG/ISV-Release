@@ -89,12 +89,19 @@ def source_assets(project, source, mac, win, stage, platform):
             else:
                 shutil.copy2(item, dest / item.name)
         shutil.rmtree(scratch)
-        binary = "kol-selection" if project == "kol-selection" else "audience-portrait"
+        binary = {"kol-selection": "kol-selection", "e2e": "e2e-dmp"}.get(project, "audience-portrait")
         name = binary if platform == "macos-arm64" else binary + ".exe"
         if not (dest / name).is_file():
             raise ValueError(f"missing runtime {dest / name}")
         for file in dest.rglob("*"):
-            if file.is_file() and file.suffix.lower() in (".py", ".pyc", ".pdb"):
+            if file.is_symlink():
+                raise ValueError("symbolic link in public runtime")
+            forbidden_suffixes = {".py", ".pyc", ".pyo", ".pyi", ".pdb", ".c",
+                                  ".h", ".o", ".obj", ".a", ".lib", ".map",
+                                  ".har", ".ipynb", ".pem", ".key"}
+            if file.is_file() and (file.suffix.lower() in forbidden_suffixes or
+                                   file.name.lower() in {".env", "credentials.json",
+                                                        "cookies.json", "config.json"}):
                 raise ValueError(f"uncompiled/debug source in package: {file.name}")
 
 
@@ -114,12 +121,13 @@ def build(project, version, tag, source, mac, win, output, templates):
             write_zip(staging, output / filename)
         hashes[platform] = sha(output / filename)
         (output / (filename + ".sha256")).write_text(f"{hashes[platform]}  {filename}\n")
-    if project not in {"product-grabber", "audience-portrait", "kol-selection"}:
+    if project not in {"product-grabber", "audience-portrait", "kol-selection", "e2e"}:
         raise ValueError("unknown project")
     skill_paths = {
         "product-grabber": "product-scraping/product-grabber/skills/product-grabber",
         "audience-portrait": "audience-portrait/skills/audience-portrait",
         "kol-selection": "kol-selection/skills/kol-selection",
+        "e2e": "e2e/skills/e2e",
     }
     source_skill = source / skill_paths[project]
     with tempfile.TemporaryDirectory() as tmp:
@@ -131,7 +139,7 @@ def build(project, version, tag, source, mac, win, output, templates):
         if (source_skill / "README.md").is_file():
             shutil.copy2(source_skill / "README.md", stage / "README.md")
         else:
-            (stage / "README.md").write_text("KOL 筛选工作台 Skill 安装说明。\n", encoding="utf-8")
+            (stage / "README.md").write_text(project + " 工作台 Skill 安装说明。\n", encoding="utf-8")
         for platform_script in ("setup.sh", "setup.ps1"):
             suffix = platform_script.rsplit(".", 1)[-1]
             shutil.copy2(source_skill / "scripts" / platform_script, stage / "scripts" / f"setup-bundled.{suffix}")
@@ -190,7 +198,7 @@ def build(project, version, tag, source, mac, win, output, templates):
             release = {"name": project, "version": version, "platforms": list(PLATFORMS),
                        "extensionId": "bbnfnhfbjagbmkcfilfnnnjpmoopcgba"}
         else:
-            port = 8788 if project == "kol-selection" else 8766
+            port = {"kol-selection": 8788, "e2e": 8787}.get(project, 8766)
             release = {"name": project, "version": version, "platforms": list(PLATFORMS), "workbenchPort": port,
                        "workbenchPath": "/", "runtimeEndpoint": "/api/runtime"}
         (stage / "assets" / "release.json").write_text(json.dumps(release, indent=2) + "\n")
