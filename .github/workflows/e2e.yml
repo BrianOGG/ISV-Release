@@ -272,10 +272,7 @@ jobs:
         shell: pwsh
         run: |
           $v = '${{ needs.prepare.outputs.version }}'
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder/scripts/test_module_skill_install.ps1 \
-            -Project 'e2e' \
-            -SkillZip "release-bundle/e2e-skill-$v.zip" \
-            -RuntimeZip "release-bundle/e2e-runtime-windows-x64-$v.zip"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder/scripts/test_module_skill_install.ps1 -Project 'e2e' -SkillZip "release-bundle/e2e-skill-$v.zip" -RuntimeZip "release-bundle/e2e-runtime-windows-x64-$v.zip"
           if ($LASTEXITCODE -ne 0) { throw 'Native-module final Skill failed Windows 5.1 smoke' }
 
   publish:
