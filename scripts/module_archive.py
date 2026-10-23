@@ -10,7 +10,7 @@ import zipfile
 ROOT = {"kol-selection": "kol-selection", "e2e": "e2e-dmp"}
 ENTRY = {"kol-selection": "backend.packaged_entry", "e2e": "packaged_entry"}
 NATIVE = {"macos-arm64": ".so", "windows-x64": ".pyd"}
-STATIC = {".html", ".css", ".js", ".svg", ".png", ".ico", ".woff2", ".jpg", ".jpeg", ".gif", ".webp", ".json", ".txt"}
+STATIC = {".html", ".css", ".js", ".svg", ".png", ".ico", ".woff2", ".jpg", ".jpeg", ".gif", ".webp"}
 BAD_NAMES = {".env", "config.json", "credentials.json", "cookies.json", "tokens.json",
              "nuitka-crash-report.xml", "compilation-report.xml", ".ds_store"}
 HASH_LINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[A-Za-z0-9_,.-]+\])?==[A-Za-z0-9][A-Za-z0-9_.!+~-]*"
