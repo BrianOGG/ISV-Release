@@ -27,6 +27,10 @@ on:
       - scripts/package_module_artifact.py
       - scripts/smoke_module_runtime.py
       - scripts/test_module_release.py
+      - scripts/core_handoff_archive.py
+      - scripts/assemble_handoff.py
+      - scripts/smoke_handoff.py
+      - scripts/test_handoff_core.py
       - scripts/test_module_skill_install.ps1
       - .github/workflows/verify-diagnostics.yml
   workflow_dispatch:
@@ -45,6 +49,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_source_input_fingerprint.py' -v
           python3 -m unittest discover -s scripts -p 'test_native_release_safety.py' -v
           python3 -m unittest discover -s scripts -p 'test_module_release.py' -v
+          python3 -m unittest discover -s scripts -p 'test_handoff_core.py' -v
 
   macos-export:
     runs-on: macos-14
