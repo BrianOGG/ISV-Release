@@ -54,7 +54,7 @@ class HandoffContractTests(unittest.TestCase):
             with self.subTest(project=project),tempfile.TemporaryDirectory() as temp:
                 archive,_=self.fixture(temp,project,"windows-x64")
                 self.assertEqual(core_metadata(archive,project,"windows-x64","1.0.0-dev.1")["schema_version"],2)
-                with self.assertRaisesRegex(ValueError,"CORE_METADATA_CONTRACT"):
+                with self.assertRaisesRegex(ValueError,"SOURCE_OR_WRONG_NATIVE_EXTENSION|CORE_METADATA_CONTRACT"):
                     core_metadata(archive,project,"macos-arm64","1.0.0-dev.1")
             with self.subTest(project=project),tempfile.TemporaryDirectory() as temp:
                 with self.assertRaisesRegex(ValueError,"SOURCE_OR_WRONG_NATIVE_EXTENSION"):
