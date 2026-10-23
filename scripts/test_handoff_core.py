@@ -70,7 +70,7 @@ class HandoffContractTests(unittest.TestCase):
                     blob=source.read(item.filename)
                     if item.filename=="core-build.json":
                         manifest=json.loads(blob)
-                        manifest["lock_sha256"]=sha(lock.replace(b"\\r\\n",b"\\n").replace(b"\\n",b"\\r\\n"))
+                        manifest["lock_sha256"]=sha(lock.replace(b"\r\n",b"\n").replace(b"\n",b"\r\n"))
                         blob=json.dumps(manifest).encode()
                     output.writestr(item,blob)
             lock_path=root/"windows.txt"
