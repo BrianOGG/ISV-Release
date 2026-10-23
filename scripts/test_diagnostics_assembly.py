@@ -12,15 +12,16 @@ spec.loader.exec_module(assemble)
 
 
 class OfflineDiagnosticsAssembly(unittest.TestCase):
-    def test_both_projects_include_offline_exporters_without_source(self):
-        for project in ("product-grabber", "audience-portrait", "kol-selection"):
+    def test_all_projects_include_offline_exporters_without_source(self):
+        for project in ("product-grabber", "audience-portrait", "kol-selection", "e2e"):
             with self.subTest(project=project), tempfile.TemporaryDirectory() as td:
                 root = Path(td)
                 source = root / "source"
                 slug = ("product-scraping/product-grabber/skills/product-grabber"
                         if project == "product-grabber" else
                         "audience-portrait/skills/audience-portrait" if project == "audience-portrait" else
-                        "kol-selection/skills/kol-selection")
+                        "kol-selection/skills/kol-selection" if project == "kol-selection" else
+                        "e2e/skills/e2e")
                 skill = source / slug
                 (skill / "scripts").mkdir(parents=True)
                 (skill / "SKILL.md").write_text("---\nname: safe-fixture\n---\n\nFixture Skill\n")
@@ -38,7 +39,7 @@ class OfflineDiagnosticsAssembly(unittest.TestCase):
                 else:
                     mac = root / "mac.zip"
                     win = root / "win.zip"
-                    binary = "kol-selection" if project == "kol-selection" else "audience-portrait"
+                    binary = {"kol-selection": "kol-selection", "e2e": "e2e-dmp"}.get(project, "audience-portrait")
                     for archive, parent, name in ((mac, "mac-dist", binary),
                                                   (win, "win-dist", binary + ".exe")):
                         with zipfile.ZipFile(archive, "w") as z:
