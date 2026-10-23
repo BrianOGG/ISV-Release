@@ -32,6 +32,7 @@ class ModuleReleaseTests(unittest.TestCase):
         }))
         (payload / "requirements-runtime.txt").write_text("demo==1.0 --hash=sha256:" + HASHES + "\n")
         if extra:
+            (payload / extra).parent.mkdir(parents=True, exist_ok=True)
             (payload / extra).write_text("private")
         archive = root / (project + "-" + platform + ".zip")
         pack(root / "build", platform, project, "1.0.0-dev.1", archive)
