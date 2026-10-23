@@ -198,6 +198,14 @@ def build(project, version, tag, source, mac, win, output, templates):
             "releaseTag": tag, "platforms": {p: {"url": f"{BASE_URL}/{tag}/{names[p]}", "sha256": hashes[p]}
                                             for p in PLATFORMS}
         }, indent=2) + "\n")
+        # Windows PowerShell 5.1 reads BOM-less .ps1 as the system ANSI code page.
+        # Normalize all final Skill scripts, including setup-bundled.ps1 copied
+        # from the source repository, before computing any archive checksums.
+        # The Windows bootstrap copies setup-bundled.ps1 into its cached setup.ps1,
+        # so the BOM must be present in the *source* Skill archive.
+        for ps1 in stage.rglob("*.ps1"):
+            content = ps1.read_bytes().decode("utf-8-sig")
+            ps1.write_bytes(b"\xef\xbb\xbf" + content.encode("utf-8"))
         # Full build permissions remain internal; only the Skill and bootstrap go public.
         skill_zip = output / f"{project}-skill-{version}.zip"
         write_zip(stage, skill_zip)
