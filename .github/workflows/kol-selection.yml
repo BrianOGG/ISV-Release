@@ -1,4 +1,4 @@
-# KOL dev rebuild for package resources and lifecycle fixes (EC-AI a80cd15)
+# KOL dev rebuild for standalone subprocess startup fix (EC-AI f9395c1, Nuitka 4.3.1)
 name: KOL Selection release (public builder)
 on:
   workflow_dispatch:
