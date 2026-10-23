@@ -1,0 +1,99 @@
+name: Publish verified Windows portable test candidates
+on:
+  push:
+    branches: [codex/publish-windows-preview]
+    paths:
+      - .github/workflows/publish-windows-preview.yml
+      - scripts/package_windows_preview.py
+      - scripts/smoke_windows_preview.py
+permissions:
+  contents: read
+  actions: read
+jobs:
+  publish-windows:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {project: kol-selection, version: 1.0.0-dev.2}
+          - {project: e2e, version: 1.0.0-dev.1}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: e9dee54b4befc0609088f2b3f4fd9a685b91b086
+          sparse-checkout: |
+            kol-selection/skills/kol-selection
+            e2e/skills/e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Require successful native Windows runtime provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/39939833443" > "$RUNNER_TEMP/preview-run.json"
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          run=json.loads((Path(os.environ['RUNNER_TEMP'])/'preview-run.json').read_text())
+          assert run['conclusion']=='success'
+          assert run['head_sha']=='049e47ec984fd71c682d5fe55b19e18687c24f92'
+          print('VERIFIED_NATIVE_RUNTIME_PROVENANCE')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-${{ matrix.project }}-windows-x64
+          run-id: 39939833443
+          github-token: ${{ github.token }}
+          path: download
+      - name: Package final Skill with adapted launcher and clean complete environment
+        env:
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          python scripts/package_windows_preview.py --project "$PROJECT" --version "$VERSION" \
+            --archive "download/$PROJECT-portable-windows-x64-$VERSION.tar.gz" \
+            --source source --output release
+          cd release
+          sha256sum --check SHA256SUMS.txt
+      - name: Install final Skill through PowerShell and verify lifecycle in a relocated Unicode path
+        env:
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          python scripts/smoke_windows_preview.py --project "$PROJECT" --version "$VERSION" --output release
+      - name: Publish Windows test candidate with complete environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum --check SHA256SUMS.txt
+          tag="$PROJECT-portable-win-$VERSION"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo '::error::Refuse to overwrite existing preview assets'
+            exit 1
+          fi
+          gh release create "$tag" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "$PROJECT $VERSION portable Windows test candidate" \
+            --notes 'Windows x64 TEST candidate. Includes CPython 3.12.10, public dependencies, browser and private compiled Core. Fixes the Windows venv PID readiness failure in the public launcher. CI verified the final Skill through PowerShell: cached-runtime install/reinstall, version, doctor, start, status, web UI and stop in a relocated path containing spaces and Chinese characters. No system Python or pip needed. Live network asset download, real-device install, platform login and business tasks still require hands-on testing.' \
+            ./*
