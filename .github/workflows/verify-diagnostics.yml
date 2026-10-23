@@ -140,3 +140,16 @@ jobs:
           $Errors = $null
           [void][System.Management.Automation.Language.Parser]::ParseInput($Content, [ref]$Tokens, [ref]$Errors)
           if ($Errors.Count -ne 0) { throw 'Invalid Windows PowerShell 5.1 package smoke syntax' }
+
+  windows-e2e-script:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse final E2E Skill smoke with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $Content = Get-Content -LiteralPath scripts/test_e2e_skill_install.ps1 -Raw -Encoding UTF8
+          $Tokens = $null
+          $Errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseInput($Content, [ref]$Tokens, [ref]$Errors)
+          if ($Errors.Count -ne 0) { throw 'Invalid Windows PowerShell 5.1 E2E smoke syntax' }
