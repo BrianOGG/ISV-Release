@@ -45,6 +45,9 @@ def task(label,args,env=None,timeout=900):
                      else "PRIVATE_MAIN_CATCH" if "操作未完成" in stderr
                      else "OTHER")
                 print("PORTABLE_CLI_FAIL_CLASS="+cls,flush=True)
+                import re
+                match=re.search(r"PORTABLE_LAUNCHER_EXCEPTION_CLASS=([A-Za-z]{3,60})",stderr)
+                if match: print("PORTABLE_CLI_EXCEPTION_TYPE="+match.group(1),flush=True)
                 print("PORTABLE_CLI_EXIT_NONZERO",flush=True)
                 print("PORTABLE_CLI_PRINTED_VERSION="+str("1.0.0" in stdout).lower(),flush=True)
             raise RuntimeError("STAGE_"+label+"_FAILED")
@@ -198,6 +201,7 @@ def build(project,platform_name,version,source,core,managed,output):
         # Verify actual CLI with the preinstalled portable interpreter, not a host venv.
         env=os.environ.copy()
         env["ECAI_PORTABLE_ROOT"]=str(stage)
+        env["ECAI_PORTABLE_CI_DIAG"]="1"
         if project=="kol-selection":
             env["PLAYWRIGHT_BROWSERS_PATH"]=str(stage/"browsers")
         else:
