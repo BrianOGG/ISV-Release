@@ -102,7 +102,7 @@ def uc_wheel(host_python, original, work, wheels):
        "--no-deps", "--no-input", "--require-hashes", "--no-binary=:all:",
        "-r", req, "-d", incoming,stage="UC_SDIST_DOWNLOAD")
     sdists = list(incoming.glob("undetected*"))
-    if len(sdists)!=1 or sha(sdists[0])!=match.group(1):
+    if len(sdists)!=1 or sha(sdists[0])!=match.group(1).decode("ascii"):
         raise RuntimeError("UC_SDIST_HASH_VERIFICATION_FAILED")
     print("ENV_STAGE: install public UC build tooling",flush=True)
     sh(host_python,"-m","pip","install","--disable-pip-version-check","--no-input",
