@@ -1,4 +1,4 @@
-# KOL dev rebuild for standalone subprocess startup fix (EC-AI f9395c1, Nuitka 4.3.1)
+# Manual public build: no private-source caches, raw compile reports, or automatic retries.
 name: KOL Selection release (public builder)
 on:
   workflow_dispatch:
@@ -7,11 +7,6 @@ on:
         description: 'Optional stable version, blank = next independent dev version'
         required: false
         type: string
-  schedule:
-    - cron: '13 */2 * * *'
-  push:
-    branches: [main]
-    paths: ['.github/workflows/kol-selection.yml']
 
 permissions:
   contents: write
@@ -42,8 +37,10 @@ jobs:
           path: source
           token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
           persist-credentials: false
-      - name: Validate version rules
-        run: python3 -m unittest discover -s builder/scripts -p test_resolve_version.py -v
+      - name: Validate version and filtered source fingerprints
+        run: |
+          python3 -m unittest discover -s builder/scripts -p test_resolve_version.py -v
+          python3 -m unittest discover -s builder/scripts -p test_source_input_fingerprint.py -v
       - name: Resolve KOL dev release
         id: check
         env:
@@ -53,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git -C source rev-parse HEAD)"
-          tree="$(git -C source rev-parse HEAD:kol-selection)"
+          tree="$(python3 builder/scripts/source_input_fingerprint.py --project kol-selection --repo source)"
           python3 builder/scripts/resolve_version.py --project kol-selection \
             --source-tree "$tree" --source-sha "$sha" --manual-version "$MANUAL_VERSION"
 
@@ -62,6 +59,13 @@ jobs:
     if: needs.prepare.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - name: Ensure private KOL build script implements memory-safe compiler controls
+        shell: bash
+        run: python3 builder/scripts/check_nuitka_source.py --project kol-selection --source source/kol-selection
       - uses: actions/checkout@v4
         with:
           repository: BrianOGG/EC-AI
@@ -101,6 +105,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
           repository: BrianOGG/EC-AI
           ref: ${{ needs.prepare.outputs.source_sha }}
           sparse-checkout: kol-selection
@@ -134,6 +142,8 @@ jobs:
         env:
           KOL_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
           KOL_BUILD_ROOT: ${{ runner.temp }}/kol-compiled
+          ECAI_NUITKA_JOBS: ${{ matrix.platform == 'windows-x64' && '1' || '2' }}
+          ECAI_NUITKA_LOW_MEMORY: ${{ matrix.platform == 'windows-x64' && '1' || '0' }}
         run: |
           if [ "${{ matrix.platform }}" = macos-arm64 ]; then
             bash scripts/build_macos_arm64.sh
@@ -150,6 +160,12 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'kol-compiled/kol-selection-windows-x64') -DestinationPath (Join-Path $env:RUNNER_TEMP 'kol-runtime.zip')
+      - name: Reject source/debug/sensitive files before public artifact upload
+        shell: bash
+        run: |
+          python "$GITHUB_WORKSPACE/builder/scripts/verify_runtime_archive.py" \\
+            --zip "$RUNNER_TEMP/kol-runtime.zip" --project kol-selection \\
+            --platform '${{ matrix.platform }}'
       - uses: actions/upload-artifact@v4
         with:
           name: kol-runtime-${{ matrix.platform }}
