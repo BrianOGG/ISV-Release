@@ -1,0 +1,299 @@
+# Manual until EC-AI/e2e has passed standalone lifecycle and Worker entry preflight.
+# Public builder: never cache or upload private source, Nuitka C intermediates, or reports.
+name: E2E release (public builder)
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Optional stable SemVer; blank = next E2E dev version'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+concurrency:
+  group: isv-e2e-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.resolve.outputs.build }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      source_tree: ${{ steps.resolve.outputs.source_tree }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: main
+          sparse-checkout: e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Validate public packaging contracts
+        run: |
+          python3 -m unittest discover -s builder/scripts -p test_resolve_version.py -v
+          python3 -m unittest discover -s builder/scripts -p test_source_input_fingerprint.py -v
+      - name: Resolve E2E project-only build input fingerprint
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          sha="$(git -C source rev-parse HEAD)"
+          fingerprint="$(python3 builder/scripts/source_input_fingerprint.py --project e2e --repo source)"
+          python3 builder/scripts/resolve_version.py \
+            --project e2e --source-tree "$fingerprint" --source-sha "$sha" \
+            --manual-version "$MANUAL_VERSION"
+
+  preflight:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          sparse-checkout: e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          cache: pip
+          cache-dependency-path: source/e2e/config/requirements-build.txt
+      - name: Reject known compiled-runtime process startup defects before costly Nuitka build
+        working-directory: source/e2e
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('Crawler/src')
+          assert (p / 'packaged_entry.py').is_file(), 'Missing standalone E2E entry'
+          assert 'process_exe' in (p / 'runtime_control.py').read_text(), 'Must use Nuitka process_exe for compiled start'
+          assert 'process_exe' in (p / 'runtime_paths.py').read_text(), 'Must use Nuitka process_exe for compiled Worker'
+          assert 'worker' in (p / 'packaged_entry.py').read_text(), 'Must retain isolated Worker CLI'
+          PY
+      - name: Source syntax and offline regressions
+        working-directory: source/e2e/Crawler
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q src
+          python -m pip install -r ../config/requirements-build.txt
+          PYTHONPATH=src python -m unittest discover -s tests -p test_request_pacing.py -v
+
+  build:
+    needs: [prepare, preflight]
+    if: needs.prepare.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: macos-14 }
+          - { platform: windows-x64, runner: windows-2022 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: source/e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          sparse-checkout: e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          cache: pip
+          cache-dependency-path: source/e2e/config/requirements-build.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: pnpm
+          cache-dependency-path: source/e2e/config/pnpm-lock.yaml
+      - name: Install pinned build dependencies
+        run: |
+          python -m venv .build-venv
+          if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
+            .build-venv/bin/python -m pip install -r config/requirements-build.txt
+          else
+            .build-venv/Scripts/python.exe -m pip install -r config/requirements-build.txt
+          fi
+      - name: Build native compiled standalone E2E runtime
+        env:
+          E2E_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          E2E_BUILD_ROOT: ${{ runner.temp }}/e2e-compiled
+        run: |
+          if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
+            bash scripts/build_macos_arm64.sh
+          else
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows_x64.ps1
+          fi
+      - name: Archive macOS runtime
+        if: matrix.platform == 'macos-arm64'
+        run: |
+          ditto -c -k --keepParent "${{ runner.temp }}/e2e-compiled/e2e-dmp-macos-arm64" "${{ runner.temp }}/e2e-runtime.zip"
+      - name: Archive Windows runtime
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          Compress-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'e2e-compiled/e2e-dmp-windows-x64') -DestinationPath (Join-Path $env:RUNNER_TEMP 'e2e-runtime.zip')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-runtime-${{ matrix.platform }}
+          path: ${{ runner.temp }}/e2e-runtime.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  test-runtime:
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: macos-14 }
+          - { platform: windows-x64, runner: windows-2022 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-runtime-${{ matrix.platform }}
+          path: runtime-zip
+      - name: Native macOS compiled E2E lifecycle and Worker test
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/e2e-unpack"
+          ditto -x -k runtime-zip/e2e-runtime.zip "$RUNNER_TEMP/e2e-unpack"
+          exe="$RUNNER_TEMP/e2e-unpack/e2e-dmp-macos-arm64/e2e-dmp"
+          chmod u+x "$exe"
+          python builder/scripts/smoke_e2e_runtime.py --binary "$exe" --version '${{ needs.prepare.outputs.version }}'
+      - name: Native Windows compiled E2E lifecycle and Worker test
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'e2e-unpack'
+          Expand-Archive -LiteralPath 'runtime-zip/e2e-runtime.zip' -DestinationPath $target
+          $exe = Join-Path $target 'e2e-dmp-windows-x64/e2e-dmp.exe'
+          python builder/scripts/smoke_e2e_runtime.py --binary $exe --version '${{ needs.prepare.outputs.version }}'
+          if ($LASTEXITCODE -ne 0) { throw 'E2E native runtime failed' }
+
+  assemble:
+    needs: [prepare, preflight, build, test-runtime]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          sparse-checkout: e2e/skills/e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-runtime-macos-arm64
+          path: platform/mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-runtime-windows-x64
+          path: platform/win
+      - name: Assemble source-protected runtimes and small Skill ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 builder/scripts/assemble_lite.py \
+            --project e2e --version '${{ needs.prepare.outputs.version }}' \
+            --tag '${{ needs.prepare.outputs.tag }}' \
+            --source source --mac platform/mac/e2e-runtime.zip --win platform/win/e2e-runtime.zip \
+            --templates builder/scripts --output dist/release
+          test "$(stat -c %s "dist/release/e2e-skill-${{ needs.prepare.outputs.version }}.zip")" -lt 20000000
+          unzip -Z1 "dist/release/e2e-skill-${{ needs.prepare.outputs.version }}.zip" | grep -Fx 'SKILL.md'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-release-bundle
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 3
+
+  verify-final-skill:
+    needs: [prepare, assemble]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-release-bundle
+          path: release-bundle
+      - name: Validate final Skill in Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $version = '${{ needs.prepare.outputs.version }}'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder/scripts/test_e2e_skill_install.ps1 -SkillZip "release-bundle/e2e-skill-$version.zip" -RuntimeZip "release-bundle/e2e-runtime-windows-x64-$version.zip"
+          if ($LASTEXITCODE -ne 0) { throw 'Final E2E Windows Skill installation failed' }
+
+  publish:
+    needs: [prepare, assemble, verify-final-skill]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-release-bundle
+          path: dist/release
+      - name: Publish immutable E2E Dev Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.prepare.outputs.source_tree }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Refusing to overwrite existing immutable release $TAG"
+            exit 1
+          fi
+          notes="$(printf 'E2E %s\n\nSource-Commit: %s\nSource-Tree: %s\n\nSource-Tree is a filtered tracked release-input fingerprint, not a full repository tree hash. macOS ARM64 and Windows x64 compiled runtimes, plus a small SHA256-verified Skill. No private source or browser accounts are published. Chrome is required for login.\n' "$VERSION" "$SOURCE_SHA" "$SOURCE_TREE")"
+          options=()
+          if [ "$PRERELEASE" = "true" ]; then options+=(--prerelease); fi
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+            --target main --title "E2E $VERSION" \
+            "${options[@]}" --notes "$notes" dist/release/*
