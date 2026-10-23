@@ -66,6 +66,19 @@ def package(project, version, archive, source, output):
         if setup.count(marker) != 1:
             raise ValueError('PREVIEW_SETUP_PARSER_CONTRACT_CHANGED')
         setup = setup.replace(marker, b'^([A-Z][A-Z0-9_]*)=')
+        extract_marker = b'        & tar.exe -xzf $Archive -C $Stage'
+        # Win32 tar receives only ASCII relative arguments; PowerShell changes
+        # the current directory through its Unicode-capable filesystem APIs.
+        # This also avoids extending every archive entry with a long prefix.
+        if setup.count(extract_marker) != 1:
+            raise ValueError('PREVIEW_SETUP_EXTRACT_CONTRACT_CHANGED')
+        setup = setup.replace(extract_marker, (
+            '        Push-Location -LiteralPath $Cache\r\n'
+            '        try {\r\n'
+            '          & tar.exe -xzf ($Hash+\'.tar.gz\') -C (Split-Path -Path $Stage -Leaf)\r\n'
+            '          $ExtractExit=$LASTEXITCODE\r\n'
+            '        } finally { Pop-Location }\r\n'
+            '        $LASTEXITCODE=$ExtractExit').encode('ascii'))
         entries = {'SKILL.md': text.encode('utf-8'), 'scripts/setup.ps1': setup,
                    'scripts/ecai_launcher.py': launcher.read_bytes(),
                    'assets/portable-windows-x64.conf': config.encode('ascii')}
