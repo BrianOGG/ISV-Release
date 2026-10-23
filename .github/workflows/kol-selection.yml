@@ -63,9 +63,6 @@ jobs:
         with:
           path: builder
           persist-credentials: false
-      - name: Ensure private KOL build script implements memory-safe compiler controls
-        shell: bash
-        run: python3 builder/scripts/check_nuitka_source.py --project kol-selection --source source/kol-selection
       - uses: actions/checkout@v4
         with:
           repository: BrianOGG/EC-AI
@@ -74,6 +71,9 @@ jobs:
           path: source
           token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
           persist-credentials: false
+      - name: Ensure private KOL build script implements memory-safe compiler controls
+        shell: bash
+        run: python3 builder/scripts/check_nuitka_source.py --project kol-selection --source source/kol-selection
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12.10'
