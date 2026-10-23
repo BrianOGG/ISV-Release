@@ -54,12 +54,27 @@ jobs:
           assert run['head_sha']=='049e47ec984fd71c682d5fe55b19e18687c24f92'
           print('VERIFIED_NATIVE_RUNTIME_PROVENANCE')
           PY
-      - uses: actions/download-artifact@v4
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
-          name: portable-${{ matrix.project }}-windows-x64
-          run-id: 39939833443
-          github-token: ${{ github.token }}
-          path: download
+          version: '0.13.5'
+          enable-cache: false
+      - name: Assemble complete environment directly from verified native Core
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/windows-preview-python
+        run: |
+          set -euo pipefail
+          uv python install 3.12.10
+          mkdir -p download native
+          gh release download "$PROJECT-v$VERSION" -R "$GITHUB_REPOSITORY" \
+            -p "$PROJECT-core-windows-x64-$VERSION.zip" -D native
+          python scripts/build_portable_bundle.py --project "$PROJECT" --platform windows-x64 \
+            --version "$VERSION" --source source \
+            --core "native/$PROJECT-core-windows-x64-$VERSION.zip" \
+            --managed-python "$RUNNER_TEMP/windows-preview-python" \
+            --output "download/$PROJECT-portable-windows-x64-$VERSION.tar.gz"
       - name: Package final Skill with adapted launcher and clean complete environment
         env:
           PROJECT: ${{ matrix.project }}

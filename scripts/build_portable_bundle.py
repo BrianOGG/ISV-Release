@@ -182,6 +182,9 @@ def build(project,platform_name,version,source,core,managed,output):
         if meta["lock_sha256"]!=lock_digest:
             raise RuntimeError("CORE_DEPENDENCY_LOCK_MISMATCH")
         shutil.copy2(source/project/"skills"/project/"scripts"/"ecai_launcher.py",stage/"ecai_launcher.py")
+        if sys.platform == "win32":
+            from patch_windows_launcher import patch
+            patch(stage/"ecai_launcher.py")
         browser_path=""
         if project=="kol-selection":
             env=os.environ.copy()
