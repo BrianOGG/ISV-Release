@@ -83,5 +83,9 @@ if __name__=="__main__":
     args=p.parse_args()
     try:
         assemble(args.project,args.version,args.tag,args.source,args.mac,args.win,args.output)
-    except (OSError,ValueError,json.JSONDecodeError,zipfile.BadZipFile):
-        raise SystemExit("Release assemble blocked: CORE_OR_SKILL_CONTRACT_FAILURE")
+    except (OSError,ValueError,json.JSONDecodeError,zipfile.BadZipFile) as error:
+        # Error codes from this public assembler are fixed uppercase tokens.
+        # Do not expose arbitrary exception text (paths, URLs, private data).
+        code = str(error) if type(error) is ValueError and re.fullmatch(
+            r"[A-Z_]{1,80}", str(error)) else "CORE_OR_SKILL_CONTRACT_FAILURE"
+        raise SystemExit("Release assemble blocked: " + code)
