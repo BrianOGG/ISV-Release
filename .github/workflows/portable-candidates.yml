@@ -1,4 +1,4 @@
-# Native Core is reused from RC; only public Python, wheels and browsers assembled.
+# Native Core is reused from RC; only public Python, wheels and browsers assembled. Native load gate now emits safe diagnostic codes.
 name: Build complete portable KOL and E2E candidates
 on:
   push:
