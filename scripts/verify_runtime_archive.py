@@ -33,16 +33,28 @@ def check_archive(path, project, platform):
             if (item.startswith("/") or ".." in bits.parts or
                     item.startswith("\\") or "\x00" in item):
                 raise ValueError("UNSAFE_ARCHIVE_MEMBER")
-            if item.startswith("__MACOSX/") or bits.name.startswith("._"):
+            if bits.name.lower() in FORBIDDEN_NAMES or bits.suffix.lower() in FORBIDDEN_EXTENSIONS:
+                raise ValueError("PRIVATE_OR_DEBUG_CONTENT_IN_ARCHIVE")
+            if bits.name.lower().startswith(".env."):
+                raise ValueError("PRIVATE_OR_DEBUG_CONTENT_IN_ARCHIVE")
+            if stat.S_IFMT(entry.external_attr >> 16) == stat.S_IFLNK:
+                raise ValueError("SYMLINK_IN_PUBLIC_ARCHIVE")
+            if item.startswith("__MACOSX/"):
+                # ditto may emit AppleDouble sidecars; accept only small, opaque
+                # AppleDouble files, never arbitrary payloads concealed here.
+                if entry.is_dir():
+                    continue
+                if not bits.name.startswith("._") or entry.file_size > 131072:
+                    raise ValueError("UNEXPECTED_MACOS_METADATA")
+                continue
+            if bits.name.startswith("._"):
+                if entry.file_size > 131072:
+                    raise ValueError("UNEXPECTED_MACOS_METADATA")
                 continue
             if not item.startswith(root_name + "/"):
                 raise ValueError("UNEXPECTED_ARCHIVE_ROOT")
-            if stat.S_IFMT(entry.external_attr >> 16) == stat.S_IFLNK:
-                raise ValueError("SYMLINK_IN_PUBLIC_ARCHIVE")
             if entry.is_dir():
                 continue
-            if bits.name.lower() in FORBIDDEN_NAMES or bits.suffix.lower() in FORBIDDEN_EXTENSIONS:
-                raise ValueError("PRIVATE_OR_DEBUG_CONTENT_IN_ARCHIVE")
             if ".git" in bits.parts or ".build-venv" in bits.parts:
                 raise ValueError("PRIVATE_SOURCE_DIRECTORY_IN_ARCHIVE")
             total += entry.file_size
