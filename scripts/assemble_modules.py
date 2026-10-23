@@ -46,7 +46,8 @@ def build(project, version, tag, source, mac, win, output, templates):
                  "无需安装 Nuitka，也不从源码编译。\n"
                  "支持 prepare、install、start、status、stop、setup、doctor、version。"
                  "安装前请确认本机 Python 3.12 可用；缺失时由 Agent 从官方渠道协助安装。"
-                 "KOL 需要匹配的 Playwright Chromium；E2E 登录需要本机 Google Chrome。"
+                 "KOL 首次安装后请执行 scripts/setup.sh setup（Windows 使用 setup.ps1 -Action setup）"
+                 "安装匹配的 Playwright Chromium；E2E 登录需要本机 Google Chrome。"
                  "报告和登录凭证保存在用户私有数据目录，更新程序不清除它们。\n")
         (stage / "SKILL.md").write_text(text, encoding="utf-8")
         if (source_skill / "README.md").is_file():
