@@ -74,19 +74,13 @@ jobs:
           python-version: '3.12.10'
           cache: pip
           cache-dependency-path: source/e2e/config/requirements-build.txt
-      - name: Reject known compiled-runtime process startup defects before costly Nuitka build
-        working-directory: source/e2e
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - name: Preflight memory-safe compiler flags and Nuitka process restarts
         shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('Crawler/src')
-          assert (p / 'packaged_entry.py').is_file(), 'Missing standalone E2E entry'
-          assert 'process_exe' in (p / 'runtime_control.py').read_text(), 'Must use Nuitka process_exe for compiled start'
-          assert 'process_exe' in (p / 'runtime_paths.py').read_text(), 'Must use Nuitka process_exe for compiled Worker'
-          assert 'worker' in (p / 'packaged_entry.py').read_text(), 'Must retain isolated Worker CLI'
-          PY
+        run: python3 builder/scripts/check_nuitka_source.py --project e2e --source source/e2e
       - name: Source syntax and offline regressions
         working-directory: source/e2e/Crawler
         shell: bash
@@ -111,6 +105,10 @@ jobs:
         shell: bash
         working-directory: source/e2e
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: BrianOGG/EC-AI
@@ -144,6 +142,8 @@ jobs:
         env:
           E2E_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
           E2E_BUILD_ROOT: ${{ runner.temp }}/e2e-compiled
+          ECAI_NUITKA_JOBS: ${{ matrix.platform == 'windows-x64' && '1' || '2' }}
+          ECAI_NUITKA_LOW_MEMORY: ${{ matrix.platform == 'windows-x64' && '1' || '0' }}
         run: |
           if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
             bash scripts/build_macos_arm64.sh
@@ -159,6 +159,12 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'e2e-compiled/e2e-dmp-windows-x64') -DestinationPath (Join-Path $env:RUNNER_TEMP 'e2e-runtime.zip')
+      - name: Reject source/debug/sensitive files before public artifact upload
+        shell: bash
+        run: |
+          python "$GITHUB_WORKSPACE/builder/scripts/verify_runtime_archive.py" \
+            --zip "$RUNNER_TEMP/e2e-runtime.zip" --project e2e \
+            --platform '${{ matrix.platform }}'
       - uses: actions/upload-artifact@v4
         with:
           name: e2e-runtime-${{ matrix.platform }}
