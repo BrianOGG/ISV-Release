@@ -8,7 +8,7 @@ import unittest
 import zipfile
 
 from core_handoff_archive import core_metadata, build_archive
-from assemble_handoff import assemble
+from assemble_handoff import assemble, verified_core_with_canonical_lock
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -59,6 +59,30 @@ class HandoffContractTests(unittest.TestCase):
             with self.subTest(project=project),tempfile.TemporaryDirectory() as temp:
                 with self.assertRaisesRegex(ValueError,"SOURCE_OR_WRONG_NATIVE_EXTENSION"):
                     self.fixture(temp,project,"windows-x64",with_source=True)
+
+    def test_windows_lock_crlf_rebinds_only_verified_newline_variants(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive, lock = self.fixture(root/"fixture", "kol-selection", "windows-x64")
+            changed = root/"changed.zip"
+            with zipfile.ZipFile(archive) as source, zipfile.ZipFile(changed,"w") as output:
+                for item in source.infolist():
+                    blob=source.read(item.filename)
+                    if item.filename=="core-build.json":
+                        manifest=json.loads(blob)
+                        manifest["lock_sha256"]=sha(lock.replace(b"\\r\\n",b"\\n").replace(b"\\n",b"\\r\\n"))
+                        blob=json.dumps(manifest).encode()
+                    output.writestr(item,blob)
+            lock_path=root/"windows.txt"
+            lock_path.write_bytes(lock)
+            result=root/"fixed.zip"
+            meta=verified_core_with_canonical_lock(changed,result,"kol-selection","windows-x64","1.0.0-dev.1",lock_path)
+            self.assertEqual(meta["lock_sha256"],sha(lock))
+            self.assertEqual(core_metadata(result,"kol-selection","windows-x64","1.0.0-dev.1")["lock_sha256"],sha(lock))
+            bad=root/"untrusted.txt"
+            bad.write_bytes(b"modified lock with different dependency")
+            with self.assertRaisesRegex(ValueError,"CORE_RUNTIME_LOCK_MISMATCH"):
+                verified_core_with_canonical_lock(changed,root/"invalid.zip","kol-selection","windows-x64","1.0.0-dev.1",bad)
 
     def test_assemble_skill_uses_exact_ecai_installer_and_lock_hashes(self):
         for project in ("kol-selection","e2e"):
