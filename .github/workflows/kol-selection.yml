@@ -1,4 +1,4 @@
-# Codex v2 native-Core contract. Only E2E and KOL use this pipeline.
+# Codex v2 native-Core contract. Build requested for EC-AI native-module handoff. Only E2E and KOL use this pipeline.
 # No third-party Python compilation and no private source/C/object uploads.
 name: KOL Selection release (public builder)
 on:
