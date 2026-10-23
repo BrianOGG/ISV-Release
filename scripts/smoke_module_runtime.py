@@ -78,7 +78,11 @@ def main():
                         raise AssertionError("COMPILED_WORKBENCH_HTML_MISSING")
                     if suffix != "/":
                         json.loads(data)
-            print("Compiled module smoke passed: entry, worker, service, API and HTML")
+            if args.project == "kol-selection":
+                # Preserve the existing offline 23-KOL demo/report quality gate.
+                from smoke_kol_runtime import verify_app
+                verify_app(opener, base_url)
+            print("Compiled module smoke passed: entry, worker, service, API, HTML and KOL demo")
         finally:
             if running:
                 stop = launch(python, installed, ["stop", *port_args], env, timeout=60)
