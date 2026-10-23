@@ -37,7 +37,17 @@ def task(label,args,env=None,timeout=900):
         r=subprocess.run([str(s) for s in args],cwd=None,env=env,
                          stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                          timeout=timeout,check=False)
-        if r.returncode: raise RuntimeError("STAGE_"+label+"_FAILED")
+        if r.returncode:
+            if label=="NATIVE_CORE_VERSION":
+                stdout=r.stdout.decode("utf-8",errors="replace")
+                stderr=r.stderr.decode("utf-8",errors="replace")
+                cls=("PUBLIC_LAUNCHER_CATCH" if "启动检查未通过" in stderr
+                     else "PRIVATE_MAIN_CATCH" if "操作未完成" in stderr
+                     else "OTHER")
+                print("PORTABLE_CLI_FAIL_CLASS="+cls,flush=True)
+                print("PORTABLE_CLI_EXIT_NONZERO",flush=True)
+                print("PORTABLE_CLI_PRINTED_VERSION="+str("1.0.0" in stdout).lower(),flush=True)
+            raise RuntimeError("STAGE_"+label+"_FAILED")
         return r.stdout.decode("utf-8",errors="replace").strip()
     except subprocess.TimeoutExpired:
         raise RuntimeError("STAGE_"+label+"_TIMEOUT") from None
