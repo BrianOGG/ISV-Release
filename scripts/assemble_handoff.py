@@ -27,6 +27,35 @@ ALLOWED=[
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
+def verified_core_with_canonical_lock(source, destination, project, platform, version, lock_file):
+    """Only repair verified Windows LF/CRLF lock drift; never relax artifact hashes."""
+    meta = core_metadata(source, project, platform, version)
+    raw = lock_file.read_bytes()
+    canonical = hashlib.sha256(raw).hexdigest()
+    if meta["lock_sha256"] == canonical:
+        shutil.copyfile(source, destination)
+        return meta
+    # Git on Windows can autocrlf checkout the Git-committed LF requirement lock.
+    crlf = raw.replace(b"\\r\\n", b"\\n").replace(b"\\n", b"\\r\\n")
+    crlf_sha = hashlib.sha256(crlf).hexdigest()
+    if platform != "windows-x64" or meta["lock_sha256"] != crlf_sha:
+        raise ValueError("CORE_RUNTIME_LOCK_MISMATCH")
+    meta["lock_sha256"] = canonical
+    with zipfile.ZipFile(source) as incoming, zipfile.ZipFile(
+            destination, "w", compression=zipfile.ZIP_DEFLATED) as outgoing:
+        for item in incoming.infolist():
+            if item.is_dir():
+                continue
+            body = incoming.read(item.filename)
+            if item.filename == "core-build.json":
+                body = (json.dumps(meta, ensure_ascii=False, indent=2) + "\\n").encode("utf-8")
+            outgoing.writestr(item, body)
+    rewritten = core_metadata(destination, project, platform, version)
+    if rewritten["lock_sha256"] != canonical:
+        raise ValueError("CORE_LOCK_CANONICALIZATION_FAILED")
+    print("Verified Windows Git LF/CRLF-only lock normalization applied")
+    return rewritten
+
 def assemble(project,version,tag,source,mac,win,out):
     if project not in PROJECT_SKILL or tag != project+"-v"+version:
         raise ValueError("INVALID_RELEASE_IDENTIFIERS")
@@ -35,13 +64,10 @@ def assemble(project,version,tag,source,mac,win,out):
     out.mkdir(parents=True,exist_ok=True)
     attrs={}
     for platform,core in (("macos-arm64",Path(mac)),("windows-x64",Path(win))):
-        meta=core_metadata(core,project,platform,version)
         locked=skill/"assets"/("requirements-runtime-"+platform+".txt")
         bootstrap=skill/"assets"/("requirements-bootstrap-"+platform+".txt")
-        if (sha(locked)!=meta["lock_sha256"]):
-            raise ValueError("CORE_RUNTIME_LOCK_MISMATCH")
         name=project+"-core-"+platform+"-"+version+".zip"
-        shutil.copyfile(core,out/name)
+        meta=verified_core_with_canonical_lock(core,out/name,project,platform,version,locked)
         attrs[platform]={
             "url":BASE+"/"+tag+"/"+name,
             "sha256":sha(out/name),
