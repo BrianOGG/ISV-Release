@@ -195,8 +195,24 @@ def build(project,platform_name,version,source,core,managed,output):
         task("CREATE_NO_PIP_VENV",[exe,"-I","-m","venv","--without-pip",
                                      "--system-site-packages",stage/"venv"],env=env,timeout=60)
         venv_python=stage/"venv"/("Scripts/python.exe" if sys.platform=="win32" else "bin/python")
-        task("NATIVE_CORE_VERSION",[venv_python,"-I",stage/"ecai_launcher.py",
-                                   "--release",release,"version"],env=env,timeout=45)
+        try:
+            task("NATIVE_CORE_VERSION",[venv_python,"-I",stage/"ecai_launcher.py",
+                                       "--release",release,"version"],env=env,timeout=45)
+        except RuntimeError:
+            # Diagnose using only stage/error-type codes; never print private
+            # import traceback, source or user-specific filesystem locations.
+            print("PORTABLE_STAGE: SAFE_NATIVE_CORE_IMPORT_PROBE",flush=True)
+            probe=Path(__file__).with_name("probe_portable_core.py")
+            res=subprocess.run([str(venv_python),"-I",str(probe),"--launcher",
+                                str(stage/"ecai_launcher.py"),"--core",str(release)],
+                               stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                               env=env,timeout=60,check=False)
+            for line in res.stdout.decode("utf-8",errors="replace").splitlines():
+                if line.startswith("PORTABLE_DIAG="):
+                    import re
+                    if re.fullmatch(r"PORTABLE_DIAG=[A-Z_]+(?:[A-Za-z]+)?(?:_[A-Z_]+)*",line):
+                        print(line,flush=True)
+            raise
         task("NATIVE_CORE_DOCTOR",[venv_python,"-I",stage/"ecai_launcher.py",
                                   "--release",release,"doctor"],env=env,timeout=60)
         env["KOL_DATA_DIR"]=str(stage/"test-kol-data")
