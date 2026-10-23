@@ -1,0 +1,199 @@
+# Native Core is reused from RC; only public Python, wheels and browsers assembled.
+name: Build complete portable KOL and E2E candidates
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/portable-candidates.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ecai-portable-candidates
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: kol-selection
+            version: 1.0.0-dev.2
+            platform: macos-arm64
+            runner: macos-14
+          - project: kol-selection
+            version: 1.0.0-dev.2
+            platform: windows-x64
+            runner: windows-2022
+          - project: e2e
+            version: 1.0.0-dev.1
+            platform: macos-arm64
+            runner: macos-14
+          - project: e2e
+            version: 1.0.0-dev.1
+            platform: windows-x64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: 83da9098d9e18f7fa7af3051c341aea1a159fe13
+          sparse-checkout: |
+            kol-selection/skills/kol-selection
+            e2e/skills/e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: 'latest'
+          enable-cache: false
+      - name: Download and verify existing native Core (NO NUITKA)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p native
+          gh release download "$PROJECT-v$VERSION" \
+            -R "$GITHUB_REPOSITORY" \
+            -p "$PROJECT-core-$PLATFORM-$VERSION.zip" \
+            -D native
+          python builder/scripts/core_handoff_archive.py \
+            --project "$PROJECT" --platform "$PLATFORM" --version "$VERSION" \
+            --zip "native/$PROJECT-core-$PLATFORM-$VERSION.zip"
+      - name: Acquire prebuilt portable CPython 3.12.10
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/portable-python
+        run: |
+          set -euo pipefail
+          uv python install 3.12.10
+          test -d "$UV_PYTHON_INSTALL_DIR"
+      - name: Preinstall ALL dependencies, bundle browser, test actual Core then compress
+        shell: bash
+        env:
+          PROJECT: ${{ matrix.project }}
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          python builder/scripts/build_portable_bundle.py \
+            --project "$PROJECT" --platform "$PLATFORM" --version "$VERSION" \
+            --source source \
+            --core "native/$PROJECT-core-$PLATFORM-$VERSION.zip" \
+            --managed-python "$RUNNER_TEMP/portable-python" \
+            --output "$RUNNER_TEMP/out/$PROJECT-portable-$PLATFORM-$VERSION.tar.gz"
+      - name: Upload ONLY verified portable runtime, never private source
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.project }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/out/*.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 5
+
+  assemble:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {project: kol-selection, version: 1.0.0-dev.2}
+          - {project: e2e, version: 1.0.0-dev.1}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: 83da9098d9e18f7fa7af3051c341aea1a159fe13
+          sparse-checkout: |
+            kol-selection/skills/kol-selection
+            e2e/skills/e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-${{ matrix.project }}-macos-arm64
+          path: mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-${{ matrix.project }}-windows-x64
+          path: win
+      - name: Build small self-contained Skill install ZIP + full Runtime bundles
+        shell: bash
+        env:
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          python3 builder/scripts/assemble_portable.py \
+            --source source --project "$PROJECT" --version "$VERSION" \
+            --tag "$PROJECT-portable-$VERSION" \
+            --mac "mac/$PROJECT-portable-macos-arm64-$VERSION.tar.gz" \
+            --win "win/$PROJECT-portable-windows-x64-$VERSION.tar.gz" \
+            --output dist
+          cd dist
+          sha256sum --check SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-release-${{ matrix.project }}
+          path: dist/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    needs: assemble
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {project: kol-selection, version: 1.0.0-dev.2}
+          - {project: e2e, version: 1.0.0-dev.1}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-release-${{ matrix.project }}
+          path: release
+      - name: Publish test candidate once full runtime compiled & launched on both native runners
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ matrix.project }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum --check SHA256SUMS.txt
+          tag="$PROJECT-portable-$VERSION"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Immutable tag already exists; do not overwrite."
+            exit 1
+          fi
+          notes="Pre-release TEST candidate: complete portable CPython 3.12.10, installed public dependencies and platform browser, verified native Core modules from the existing $PROJECT-v$VERSION release. No Nuitka rebuild. The Skill installs without system Python or pip. CI tested native version, browser doctor, workbench start/status/HTTP/stop. Live platform account login still needs manual acceptance. Audience Portrait and Product Grabber unchanged."
+          gh release create "$tag" -R "$GITHUB_REPOSITORY" \
+            --title "$PROJECT portable $VERSION (ready-to-test)" \
+            --target main --prerelease --notes "$notes" ./*
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
