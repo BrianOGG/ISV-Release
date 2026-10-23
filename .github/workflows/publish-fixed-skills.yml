@@ -1,0 +1,69 @@
+name: Publish fixed KOL and E2E Skills
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dist/fixed-skills/v1.0.0/**"
+      - ".github/workflows/publish-fixed-skills.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate immutable Skill archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, zipfile
+          root = Path("dist/fixed-skills/v1.0.0")
+          expected = {
+              "kol-selection": "7cc5916510406a958346a85be8131a9d2ea3ce71a4c88c86a42d81233bae8d7e",
+              "e2e": "f0c1720a888e2b66fc409fbfe5f1cd6805189c881119784968af220ee1d414ed",
+          }
+          required = {"SKILL.md", "scripts/setup.ps1", "scripts/setup.sh", "scripts/resolve-macos.js"}
+          for project, checksum in expected.items():
+              archive = root / (project + "-skill-1.0.0.zip")
+              assert archive.is_file(), archive
+              assert hashlib.sha256(archive.read_bytes()).hexdigest() == checksum, archive
+              with zipfile.ZipFile(archive) as z:
+                  assert z.testzip() is None, archive
+                  assert set(z.namelist()) == required, archive
+                  assert z.read("scripts/setup.ps1").startswith(bytes.fromhex("efbbbf")), archive
+                  assert ("name: " + project) in z.read("SKILL.md").decode("utf-8"), archive
+                  assert "api.github.com/repos/BrianOGG/ISV-Release/releases" in z.read("scripts/setup.sh").decode("utf-8"), archive
+                  assert "api.github.com/repos/BrianOGG/ISV-Release/releases" in z.read("scripts/setup.ps1").decode("utf-8-sig"), archive
+              print("FIXED_SKILL_VERIFIED", project, checksum)
+          (root / "SHA256SUMS.txt").write_bytes(
+              "".join(v + "  " + k + "-skill-1.0.0.zip\n" for k, v in expected.items()).encode("ascii")
+          )
+          PY
+          cd dist/fixed-skills/v1.0.0
+          sha256sum --check SHA256SUMS.txt
+      - name: Publish immutable fixed Skill release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=skills-fixed-v1.0.0
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Fixed Skill Release already exists; never replace published submission assets."
+            exit 1
+          fi
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "KOL / E2E fixed Skills v1.0.0" \
+            --notes "Stable submission entry points for KOL Selection and E2E on macOS ARM64 and Windows x64. Skill ZIPs remain unchanged; install/update fetches the latest matching portable Runtime GitHub Release and verifies SHA256. Existing macOS portable runtime has passed real-device validation; Windows runtime is not yet accepted. Future runtime releases must preserve the portable artifact contract." \
+            dist/fixed-skills/v1.0.0/kol-selection-skill-1.0.0.zip \
+            dist/fixed-skills/v1.0.0/e2e-skill-1.0.0.zip \
+            dist/fixed-skills/v1.0.0/SHA256SUMS.txt
