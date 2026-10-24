@@ -7,11 +7,6 @@ on:
         description: 'Optional stable release, e.g. 1.0.0 or 1.1.0; blank = next automatic dev'
         required: false
         type: string
-  schedule:
-    - cron: '19 */2 * * *'
-  push:
-    branches: [main]
-    paths: ['.github/workflows/product-grabber.yml']
 permissions:
   contents: write
 concurrency:
@@ -141,7 +136,7 @@ jobs:
           name: product-runtime-${{ matrix.platform }}
           path: source/product-scraping/product-grabber/dist/${{ matrix.platform }}/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   test-runtime:
     needs: [prepare, build]
