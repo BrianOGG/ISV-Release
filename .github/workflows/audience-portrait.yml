@@ -6,11 +6,6 @@ on:
         description: 'Optional stable release, e.g. 1.0.0 or 1.1.0; blank = next automatic dev'
         type: string
         required: false
-  schedule:
-    - cron: '47 */2 * * *'
-  push:
-    branches: [main]
-    paths: ['.github/workflows/audience-portrait.yml']
 permissions:
   contents: write
 concurrency:
@@ -88,7 +83,7 @@ jobs:
           name: portrait-frontend
           path: source/audience-portrait/frontend/dist/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
       - name: Portability check, bytecode compilation and private diagnostic tests
         working-directory: source/audience-portrait
         run: |
@@ -142,7 +137,7 @@ jobs:
           name: portrait-macos
           path: ${{ runner.temp }}/audience-portrait/release/macos-arm64/*.zip
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   build-windows:
     needs: [prepare, preflight]
@@ -205,7 +200,7 @@ jobs:
           name: portrait-windows
           path: ${{ runner.temp }}/audience-portrait/release/windows-x64/*.zip
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   test-macos:
     needs: [prepare, build-macos]
