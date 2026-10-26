@@ -1,4 +1,4 @@
-name: Diagnose Windows public dependencies without compiling Core
+name: Diagnose combined Windows imports without compiling Core
 on:
   push:
     branches: [main]
