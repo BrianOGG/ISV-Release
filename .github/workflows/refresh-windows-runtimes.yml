@@ -27,7 +27,7 @@ jobs:
       PROJECT: ${{ matrix.project }}
       VERSION: ${{ matrix.version }}
       GH_TOKEN: ${{ github.token }}
-      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/managed-python
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/managed-python
     steps:
       - name: Checkout public build scripts
         uses: actions/checkout@v4
