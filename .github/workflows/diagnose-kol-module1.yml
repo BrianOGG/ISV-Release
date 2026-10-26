@@ -1,0 +1,39 @@
+name: Diagnose KOL Windows module-1 POST without Nuitka
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diagnose-kol-module1.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-module-one:
+    runs-on: windows-2022
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: 2abf37c29c156d7e1f2ab51125b9066ae008a10b
+          sparse-checkout: |
+            kol-selection
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          architecture: x64
+      - name: Verify source commit and public runtime packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "2abf37c29c156d7e1f2ab51125b9066ae008a10b"
+          python -m pip install --disable-pip-version-check --no-input \
+            --require-hashes -r kol-selection/config/requirements-runtime-windows-x64.txt > "$RUNNER_TEMP/public-pip.log" 2>&1 || (echo "::error::Windows public test dependencies failed to install" && exit 1)
+          python -m pip install --disable-pip-version-check --no-input "httpx==0.28.1" > "$RUNNER_TEMP/public-test-httpx.log" 2>&1 || (echo "::error::Windows public TestClient requirements failed to install" && exit 1)
+      - name: Native compiled-free module one start on Windows
+        shell: bash
+        working-directory: kol-selection
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_windows_module_start.py -v
