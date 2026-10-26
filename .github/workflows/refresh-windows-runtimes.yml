@@ -1,4 +1,5 @@
 # Windows-only refresh. macOS releases and immutable fixed Skills remain untouched.
+# Build script emits safe labels for Core/archive/lock/Launcher to distinguish post-import failures.
 name: Rebuild Windows KOL and E2E portable runtimes
 on:
   push:
