@@ -1,5 +1,5 @@
 # Windows-only refresh. macOS releases and immutable fixed Skills remain untouched.
-# Build script emits safe labels for Core/archive/lock/Launcher to distinguish post-import failures.
+# Core/Runtime lock verification now accepts the exact Windows CRLF checkout digest as well as the authenticated LF digest.
 name: Rebuild Windows KOL and E2E portable runtimes
 on:
   push:
