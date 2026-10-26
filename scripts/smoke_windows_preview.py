@@ -35,6 +35,22 @@ def smoke(project, version, output):
         env.pop('ECAI_PORTABLE_ROOT', None)
         env.pop('__PYVENV_LAUNCHER__', None)
         env['KOL_DATA_DIR' if project == 'kol-selection' else 'E2E_DATA_DIR'] = str(root/'app-data')
+        # Seed a historical, UTF-8 fixture with an incompatible task shape.
+        # The compiled service must start, leave this file unchanged, and keep
+        # normal API access. This is intentionally *not* a real user's task.
+        legacy_file = None
+        legacy_hash = None
+        if project == 'kol-selection':
+            legacy = root / 'app-data' / 'workflows' / ('a' * 32)
+            legacy.mkdir(parents=True)
+            legacy_file = legacy / 'task.json'
+            legacy_file.write_text(json.dumps({
+                'id': 'a' * 32, 'schema_version': 1, 'synthetic': True,
+                'created_at': '2026-10-23T10:00:00Z',
+                'config': {'name': '中文旧演示任务', 'targets': []},
+                'modules': {},
+            }, ensure_ascii=False), encoding='utf-8')
+            legacy_hash = hashlib.file_digest(legacy_file.open('rb'), 'sha256').hexdigest()
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -81,6 +97,35 @@ def smoke(project, version, output):
                 if response.status != 200 or b'<html' not in response.read(50000).lower():
                     raise RuntimeError('FINAL_SKILL_WEB_FAILED')
             print('FINAL_SKILL_WEB_OK', flush=True)
+            if project == 'kol-selection':
+                base = 'http://127.0.0.1:' + str(port)
+                def json_endpoint(url):
+                    with opener.open(base + url, timeout=60) as response:
+                        if response.status != 200 or 'json' not in response.headers.get('content-type', ''):
+                            raise RuntimeError('FINAL_WORKFLOW_API_NOT_JSON')
+                        return json.load(response)
+                rows = json_endpoint('/api/workflows')
+                if (not isinstance(rows, list) or len(rows) != 1
+                        or rows[0].get('archived_demo') is not True
+                        or len(rows[0]['config']['targets']) != 23):
+                    raise RuntimeError('FINAL_WORKFLOW_DEMO_NOT_READY')
+                demo_id = rows[0]['id']
+                single = json_endpoint('/api/workflows/' + demo_id)
+                if single.get('id') != demo_id:
+                    raise RuntimeError('FINAL_WORKFLOW_DEMO_DETAIL_FAILED')
+                if len(json_endpoint('/api/workflows')) != 1:
+                    raise RuntimeError('FINAL_WORKFLOW_DEMO_RELOAD_FAILED')
+                with opener.open(base + '/api/workflows/' + demo_id
+                                 + '/modules/screening/download/report.html', timeout=60) as response:
+                    if response.status != 200 or b'<html' not in response.read(100000).lower():
+                        raise RuntimeError('FINAL_WORKFLOW_DEMO_REPORT_FAILED')
+                if not legacy_file.is_file() or hashlib.file_digest(
+                        legacy_file.open('rb'), 'sha256').hexdigest() != legacy_hash:
+                    raise RuntimeError('FINAL_WORKFLOW_LEGACY_DATA_MODIFIED')
+                diag = root / 'app-data' / 'logs' / 'workflow-diagnostics.jsonl'
+                if not diag.is_file() or 'workflow.legacy_task_skipped' not in diag.read_text(encoding='utf-8'):
+                    raise RuntimeError('FINAL_WORKFLOW_LEGACY_NOT_QUARANTINED')
+                print('FINAL_WINDOWS_WORKFLOW_UTF8_DEMO_AND_LEGACY_PASSED', flush=True)
         finally:
             if started:
                 call('stop')
