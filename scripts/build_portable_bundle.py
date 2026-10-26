@@ -180,8 +180,14 @@ def build(project,platform_name,version,source,core,managed,output):
         release.mkdir()
         meta=get_archive(core,project,platform_name,version,release)
         print("PORTABLE_STAGE: VERIFY_CORE_DEPENDENCY_LOCK",flush=True)
-        lock_digest=hashlib.sha256(runtime.read_bytes().replace(b"\r\n",b"\n")).hexdigest()
-        if meta["lock_sha256"]!=lock_digest:
+        # The canonical lock in release.example.json is LF-normalized. Native
+        # Windows Core builders hash the checked-out bytes, which Git may have
+        # converted to CRLF. Both digests must refer to this exact lock file;
+        # the canonical digest was already authenticated above.
+        lock_bytes=runtime.read_bytes()
+        lock_digest=hashlib.sha256(lock_bytes.replace(b"\r\n",b"\n")).hexdigest()
+        raw_lock_digest=hashlib.sha256(lock_bytes).hexdigest()
+        if meta["lock_sha256"] not in (lock_digest, raw_lock_digest):
             raise RuntimeError("CORE_DEPENDENCY_LOCK_MISMATCH")
         print("PORTABLE_STAGE: COPY_PUBLIC_LAUNCHER",flush=True)
         shutil.copy2(source/project/"skills"/project/"scripts"/"ecai_launcher.py",stage/"ecai_launcher.py")
