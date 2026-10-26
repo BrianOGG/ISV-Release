@@ -50,7 +50,8 @@ def smoke(project, version, output):
                 'config': {'name': '中文旧演示任务', 'targets': []},
                 'modules': {},
             }, ensure_ascii=False), encoding='utf-8')
-            legacy_hash = hashlib.file_digest(legacy_file.open('rb'), 'sha256').hexdigest()
+            with legacy_file.open('rb') as handle:
+                legacy_hash = hashlib.file_digest(handle, 'sha256').hexdigest()
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -119,8 +120,11 @@ def smoke(project, version, output):
                                  + '/modules/screening/download/report.html', timeout=60) as response:
                     if response.status != 200 or b'<html' not in response.read(100000).lower():
                         raise RuntimeError('FINAL_WORKFLOW_DEMO_REPORT_FAILED')
-                if not legacy_file.is_file() or hashlib.file_digest(
-                        legacy_file.open('rb'), 'sha256').hexdigest() != legacy_hash:
+                if not legacy_file.is_file():
+                    raise RuntimeError('FINAL_WORKFLOW_LEGACY_DATA_MISSING')
+                with legacy_file.open('rb') as handle:
+                    new_hash = hashlib.file_digest(handle, 'sha256').hexdigest()
+                if new_hash != legacy_hash:
                     raise RuntimeError('FINAL_WORKFLOW_LEGACY_DATA_MODIFIED')
                 diag = root / 'app-data' / 'logs' / 'workflow-diagnostics.jsonl'
                 if not diag.is_file() or 'workflow.legacy_task_skipped' not in diag.read_text(encoding='utf-8'):
