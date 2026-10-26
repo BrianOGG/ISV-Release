@@ -1,0 +1,177 @@
+# Windows-only refresh. macOS releases and immutable fixed Skills remain untouched.
+# Core/Runtime lock verification now accepts the exact Windows CRLF checkout digest as well as the authenticated LF digest.
+name: Repair and publish KOL Windows v1.0.0-dev.4
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/repair-kol-win-dev4.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ecai-kol-windows-dev4
+  cancel-in-progress: false
+
+jobs:
+  build-test-publish:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: kol-selection, version: '1.0.0-dev.4', skill: 'kol-selection-skill-1.0.1.zip' }
+    permissions:
+      contents: write
+    env:
+      PROJECT: ${{ matrix.project }}
+      VERSION: ${{ matrix.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout public build scripts
+        uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+
+      - name: Checkout pinned private source without storing credentials
+        uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: a353b02ae3324a5f3afb27a98e5db3be41a3702a
+          sparse-checkout: |
+            kol-selection
+            e2e
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          architecture: x64
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: 'latest'
+          enable-cache: false
+
+      - name: Check immutable tag, source integrity and changed files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = 'a353b02ae3324a5f3afb27a98e5db3be41a3702a'
+          if gh release view "$PROJECT-portable-win-$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Immutable Windows portable version already exists"
+            exit 1
+          fi
+          python - <<'PY'
+          import ast
+          import os
+          from pathlib import Path
+          project = os.environ['PROJECT']
+          root = Path('source') / project
+          changed = {
+              'kol-selection': [
+                  'backend/runtime_control.py',
+                  'backend/workflow.py', 'backend/workflow_api.py',
+                  'backend/demo.py', 'backend/storage.py', 'backend/main.py',
+                  'backend/model_settings.py', 'backend/runtime_cookies.py',
+                  'backend/worker.py', 'backend/lingxi_worker.py',
+                  'backend/workflow_modules.py', 'backend/workflow_progress.py',
+                  'skills/kol-selection/scripts/ecai_launcher.py',
+                  'tests/test_windows_workflow_utf8.py'
+              ],
+              'e2e': [
+                  'Crawler/src/yuntu_login.py',
+                  'Crawler/src/yuntu_web.py',
+                  'Crawler/src/worker.py'
+              ]
+          }[project]
+          for name in changed:
+              ast.parse((root / name).read_text(encoding='utf-8'))
+          print('PRIVATE_SOURCE_SYNTAX_OK', project)
+          PY
+
+      - name: Compile Windows x64 private native Core (logs not uploaded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-input -r "source/$PROJECT/config/requirements-build.txt" > "$RUNNER_TEMP/private-build-deps.log" 2>&1
+          if ! python "source/$PROJECT/scripts/build_runtime.py"             --platform windows-x64 --version "$VERSION"             --output-dir "$RUNNER_TEMP/new-core" > "$RUNNER_TEMP/private-compile.log" 2>&1; then
+              echo "::error::Windows native Core compilation failed; private compiler logs withheld"
+              exit 1
+          fi
+          python builder/scripts/core_handoff_archive.py             --directory "$RUNNER_TEMP/new-core/$PROJECT-core-windows-x64"             --output "$RUNNER_TEMP/new-core.zip" --project "$PROJECT"             --platform windows-x64 --version "$VERSION"
+
+      - name: Install portable Python 3.12.10 without rebuilding third-party dependencies
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/portable-python
+        run: |
+          set -euo pipefail
+          uv python install 3.12.10
+          test -d "$UV_PYTHON_INSTALL_DIR"
+
+      - name: Build complete Windows Runtime and smoke test native workbench
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/portable-python
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/portable" "$RUNNER_TEMP/final"
+          python builder/scripts/build_portable_bundle.py             --project "$PROJECT" --platform windows-x64 --version "$VERSION"             --source source --core "$RUNNER_TEMP/new-core.zip"             --managed-python "$UV_PYTHON_INSTALL_DIR"             --output "$RUNNER_TEMP/portable/$PROJECT-portable-windows-x64-$VERSION.tar.gz"
+
+      - name: Assemble and verify final portable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python builder/scripts/package_windows_preview.py             --project "$PROJECT" --version "$VERSION"             --archive "$RUNNER_TEMP/portable/$PROJECT-portable-windows-x64-$VERSION.tar.gz"             --source source --output "$RUNNER_TEMP/final"
+          cd "$RUNNER_TEMP/final"
+          sha256sum --check SHA256SUMS.txt
+          cd "$GITHUB_WORKSPACE"
+          python builder/scripts/smoke_windows_preview.py             --project "$PROJECT" --version "$VERSION" --output "$RUNNER_TEMP/final"
+
+      - name: Publish immutable Windows Runtime test candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$PROJECT-portable-win-$VERSION"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Do not replace an existing release"
+            exit 1
+          fi
+          gh release create "$tag"             -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease             --title "$PROJECT Windows x64 Runtime $VERSION (test candidate)"             --notes "Windows x64 UTF-8 and legacy workflow recovery test candidate. Native Nuitka Core compiled from EC-AI commit a353b02ae3324a5f3afb27a98e5db3be41a3702a; bundle includes preinstalled Python 3.12.10, dependencies, browser and private compiled modules. Native Windows CI verifies compiled start/status/stop, GET /api/workflows demo generation, report rendering, UTF-8 legacy preservation, and final preview installer. Real-device acceptance is still required for historical user workflows. Fixed Skill v1.0.1 stays unchanged. macOS Runtime unchanged."             "$RUNNER_TEMP/final/$PROJECT-portable-windows-x64-$VERSION.tar.gz"             "$RUNNER_TEMP/final/$PROJECT-portable-win-skill-$VERSION.zip"             "$RUNNER_TEMP/final/SHA256SUMS.txt"
+          echo "Windows Runtime published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify immutable Skill v1.0.1 discovers and installs newly released Windows Runtime
+        shell: powershell
+        env:
+          FIXED_SKILL_ARCHIVE: ${{ matrix.skill }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $Root=Join-Path $env:RUNNER_TEMP ('fixed-skill-online-' + $env:PROJECT)
+          $Skill=Join-Path $Root 'skill'
+          $Installed=Join-Path $Root 'installed'
+          New-Item -ItemType Directory -Path $Skill -Force | Out-Null
+          $Archived=Join-Path $env:GITHUB_WORKSPACE ('builder/dist/fixed-skills/v1.0.1/' + $env:FIXED_SKILL_ARCHIVE)
+          Expand-Archive -LiteralPath $Archived -DestinationPath $Skill -Force
+          $Script=Join-Path $Skill 'scripts/setup.ps1'
+          $Port=if($env:PROJECT -eq 'e2e') { 18887 } else { 18888 }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script -Action install -InstallDir $Installed -Port $Port
+          if ($LASTEXITCODE -ne 0) { throw 'FIXED_SKILL_ONLINE_INSTALL_FAILED' }
+          $Pointer=Join-Path $Installed 'portable/current.json'
+          if (-not (Test-Path -LiteralPath $Pointer)) { throw 'FIXED_SKILL_POINTER_MISSING' }
+          $State=Get-Content -LiteralPath $Pointer -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ($State.Version -cne $env:VERSION) { throw 'FIXED_SKILL_WRONG_RUNTIME_VERSION' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script -Action update -InstallDir $Installed -Port $Port
+          if ($LASTEXITCODE -ne 0) { throw 'FIXED_SKILL_UPDATE_FAILED' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script -Action start -InstallDir $Installed -Port $Port
+          if ($LASTEXITCODE -ne 0) { throw 'FIXED_SKILL_START_FAILED' }
+          try {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script -Action status -InstallDir $Installed -Port $Port
+            if ($LASTEXITCODE -ne 0) { throw 'FIXED_SKILL_STATUS_FAILED' }
+          } finally {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script -Action stop -InstallDir $Installed -Port $Port
+          }
+          Write-Output ('FIXED_SKILL_LATEST_RUNTIME_VERIFIED=' + $env:PROJECT + ':' + $State.Version)
