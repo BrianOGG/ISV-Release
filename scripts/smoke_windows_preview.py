@@ -130,6 +130,50 @@ def smoke(project, version, output):
                 if not diag.is_file() or 'workflow.legacy_task_skipped' not in diag.read_text(encoding='utf-8'):
                     raise RuntimeError('FINAL_WORKFLOW_LEGACY_NOT_QUARANTINED')
                 print('FINAL_WINDOWS_WORKFLOW_UTF8_DEMO_AND_LEGACY_PASSED', flush=True)
+                # Actually enter the compiled module-1 dispatch path. Existing
+                # CI only visited the UI and demo; neither imports Runner.
+                # A fixture with explicit refresh triggers real locks and
+                # background threading but performs no third-party requests.
+                fixture = {
+                    'name': 'Windows module launch smoke',
+                    'targets': ['1' * 24], 'mode': 'fixture',
+                    'brand_group_id': '21033067',
+                    'industry_audience': {
+                        'category_path': [
+                            '5ab094be481d26b8ef9045ef',
+                            '5ab094be481d26b8ef9045d3']}}
+                def json_post(url, body, expected):
+                    request = urllib.request.Request(
+                        base + url,
+                        data=json.dumps(body, ensure_ascii=False).encode('utf-8'),
+                        headers={'Content-Type': 'application/json'},
+                        method='POST')
+                    try:
+                        with opener.open(request, timeout=30) as resp:
+                            if resp.status != expected:
+                                raise RuntimeError('FINAL_MODULE_BAD_HTTP_STATUS')
+                            return json.load(resp)
+                    except urllib.error.HTTPError as error:
+                        print('FINAL_MODULE_HTTP_STATUS='+str(error.code), flush=True)
+                        raise RuntimeError('FINAL_MODULE_POST_FAILED') from None
+                task = json_post('/api/workflows', fixture, 201)
+                if not isinstance(task.get('id'), str):
+                    raise RuntimeError('FINAL_MODULE_TASK_CREATE_MISSING_ID')
+                start = json_post('/api/workflows/' + task['id']
+                                  + '/modules/task_input/run', {'refresh': True}, 202)
+                if start.get('accepted') is not True:
+                    raise RuntimeError('FINAL_MODULE_DISPATCH_NOT_ACCEPTED')
+                import time
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    state = json_endpoint('/api/workflows/' + task['id'])
+                    phase = state['modules']['task_input']['status']
+                    if phase in ('COMPLETED', 'FAILED', 'PAUSED'):
+                        break
+                    time.sleep(.3)
+                if phase != 'COMPLETED':
+                    raise RuntimeError('FINAL_MODULE_ONE_NOT_COMPLETED')
+                print('FINAL_WINDOWS_COMPILED_MODULE_ONE_PASSED', flush=True)
         finally:
             if started:
                 call('stop')
