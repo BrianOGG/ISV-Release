@@ -175,14 +175,18 @@ def build(project,platform_name,version,source,core,managed,output):
                if project=="kol-selection" else
                "import requests,uvicorn,fastapi,selenium,numpy,pandas,undetected_chromedriver,openpyxl")
         task("VERIFY_RELOCATABLE_IMPORTS",[exe,"-I","-c",smoke],timeout=45)
+        print("PORTABLE_STAGE: VERIFY_NATIVE_CORE_ARCHIVE",flush=True)
         release=stage/"release"
         release.mkdir()
         meta=get_archive(core,project,platform_name,version,release)
+        print("PORTABLE_STAGE: VERIFY_CORE_DEPENDENCY_LOCK",flush=True)
         lock_digest=hashlib.sha256(runtime.read_bytes().replace(b"\r\n",b"\n")).hexdigest()
         if meta["lock_sha256"]!=lock_digest:
             raise RuntimeError("CORE_DEPENDENCY_LOCK_MISMATCH")
+        print("PORTABLE_STAGE: COPY_PUBLIC_LAUNCHER",flush=True)
         shutil.copy2(source/project/"skills"/project/"scripts"/"ecai_launcher.py",stage/"ecai_launcher.py")
         if sys.platform == "win32":
+            print("PORTABLE_STAGE: PATCH_WINDOWS_LAUNCHER",flush=True)
             from patch_windows_launcher import patch
             patch(stage/"ecai_launcher.py")
         browser_path=""
@@ -294,5 +298,13 @@ if __name__=="__main__":
     try:
         build(a.project,a.platform,a.version,a.source,a.core,
               getattr(a,"managed_python"),a.output)
-    except (OSError,RuntimeError,ValueError,KeyError,zipfile.BadZipFile,tarfile.TarError):
-        raise SystemExit("PORTABLE_BUILD_FAILED: see last PORTABLE_STAGE label")
+    except (OSError,RuntimeError,ValueError,KeyError,zipfile.BadZipFile,tarfile.TarError) as error:
+        import re
+        message=str(error)
+        if re.fullmatch(r"[A-Z][A-Z0-9_]{3,90}", message):
+            print("PORTABLE_ERROR_CODE="+message,flush=True)
+        else:
+            kind=type(error).__name__
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{2,70}",kind):
+                print("PORTABLE_ERROR_CLASS="+kind,flush=True)
+        raise SystemExit("PORTABLE_BUILD_FAILED: see last PORTABLE_STAGE label") from None
