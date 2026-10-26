@@ -1,0 +1,57 @@
+name: Diagnose Windows public dependencies without compiling Core
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diagnose-windows-public-imports.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [kol-selection, e2e]
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      PROJECT: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: BrianOGG/EC-AI
+          ref: 23026bf85081a2f1ad43197fb191a26fae2151f0
+          sparse-checkout: |
+            kol-selection/skills/kol-selection/assets
+            e2e/skills/e2e/assets
+          path: source
+          token: ${{ secrets.EC_AI_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          architecture: x64
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - name: Download portable CPython
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/portable-python
+        run: |
+          set -euo pipefail
+          uv python install 3.12.10
+      - name: Public installed dependency import checks without Nuitka
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/portable-python
+        run: |
+          set -euo pipefail
+          python builder/scripts/diagnose_windows_imports.py \
+            --project "$PROJECT" --source source \
+            --managed-python "$UV_PYTHON_INSTALL_DIR"
