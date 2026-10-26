@@ -63,6 +63,26 @@ def main():
                 print(f"PUBLIC_IMPORT project={project} module={module} status=TIMEOUT",
                       flush=True)
                 failed = True
+        # Also test the exact aggregate import used by the production packager.
+        # Per-module imports can pass even when cross-package DLL imports conflict.
+        modules = IMPORTS[project]
+        for count in range(2, len(modules) + 1):
+            probe = subprocess.run([str(exe), "-I", "-c",
+                "import " + ",".join(modules[:count])],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=65, check=False)
+            stderr = probe.stderr.decode("utf-8", errors="replace")
+            types = re.findall(r"(?m)^([A-Za-z_][A-Za-z_0-9]*(?:Error|Exception)):", stderr)
+            classes = {"ImportError", "ModuleNotFoundError", "OSError",
+                       "RuntimeError", "AttributeError", "TypeError", "ValueError",
+                       "DLLLoadError", "FileNotFoundError", "PermissionError"}
+            err = next((x for x in reversed(types) if x in classes), "UNKNOWN")
+            status = "PASS" if probe.returncode == 0 else "FAIL"
+            print(f"COMBINED_IMPORT project={project} upto={modules[count-1]}"
+                  f" status={status} error_type={err} return_code={probe.returncode}", flush=True)
+            failed |= probe.returncode != 0
+            if probe.returncode != 0:
+                break
         if failed:
             raise SystemExit("PUBLIC_IMPORT_CHECK_FAILED")
         print("ALL_PUBLIC_IMPORTS_PASSED", project, flush=True)
